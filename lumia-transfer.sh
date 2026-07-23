@@ -8,6 +8,14 @@
 #   ./lumia-transfer.sh --all            # Re-download ALL DNGs (ignore history)
 #   ./lumia-transfer.sh --list           # Just list DNG files on the phone
 #   ./lumia-transfer.sh --import         # Download + import into Lightroom
+#
+# NOTE on the macOS "camera daemon" (ptpcamerad):
+#   macOS's ptpcamerad grabs the Lumia's USB interface exclusively, which makes
+#   libmtp fail with libusb_claim_interface() = -3 (LIBUSB_ERROR_BUSY). This
+#   script works around it automatically: while it runs, it keeps ptpcamerad
+#   stopped (a tiny background reaper). ptpcamerad runs as YOU and respawns on
+#   its own afterwards, so this is safe and reversible — and it means you do NOT
+#   need to quit Photos / Image Capture / Chrome / ChatGPT to transfer.
 # =============================================================================
 
 set -euo pipefail
@@ -18,195 +26,184 @@ HISTORY_FILE="$HOME/.lumia-transfer-history"
 LIGHTROOM_APP="/Applications/Adobe Lightroom Classic.app"
 
 # --- Colors ------------------------------------------------------------------
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-NC='\033[0m' # No Color
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
+BLUE='\033[0;34m'; CYAN='\033[0;36m'; NC='\033[0m'
 
 # --- Parse arguments ---------------------------------------------------------
-DEST="$DEFAULT_DEST"
-ALL=false
-LIST_ONLY=false
-IMPORT=false
-
+DEST="$DEFAULT_DEST"; ALL=false; LIST_ONLY=false; IMPORT=false
 for arg in "$@"; do
     case "$arg" in
         --all)    ALL=true ;;
         --list)   LIST_ONLY=true ;;
         --import) IMPORT=true ;;
         --help|-h)
-            echo "Usage: $0 [OPTIONS] [destination]"
-            echo ""
-            echo "Options:"
-            echo "  --all      Re-download ALL DNGs (ignore transfer history)"
-            echo "  --list     List DNG files on the phone without downloading"
-            echo "  --import   Import downloaded DNGs into Lightroom Classic"
-            echo "  --help     Show this help"
-            echo ""
-            echo "Destination defaults to: $DEFAULT_DEST"
-            exit 0
-            ;;
+            sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
+            exit 0 ;;
         *)        DEST="$arg" ;;
     esac
 done
 
-# --- Helper functions --------------------------------------------------------
+# --- Helpers -----------------------------------------------------------------
 info()    { echo -e "${BLUE}[INFO]${NC} $*"; }
-success() { echo -e "${GREEN}[OK]${NC} $*"; }
+success() { echo -e "${GREEN}[ OK ]${NC} $*"; }
 warn()    { echo -e "${YELLOW}[WARN]${NC} $*"; }
-error()   { echo -e "${RED}[ERROR]${NC} $*" >&2; }
-header()  { echo -e "\n${CYAN}━━━ $* ━━━${NC}\n"; }
+error()   { echo -e "${RED}[ERR ]${NC} $*" >&2; }
+header()  { echo -e "\n${CYAN}━━━ $* ━━━${NC}"; }
+
+# libmtp merges stdout+stderr; these signatures mean another process holds the
+# MTP interface. IMPORTANT: only ever call these in a condition position
+# (if/||/&&) so `set -e` doesn't trip on grep's nonzero exit.
+is_busy()     { grep -qiE 'claim_interface|unable to initialize device|unable to open raw device|libmtp panic' <<<"$1"; }
+is_nodevice() { grep -qiE 'no raw devices|no devices' <<<"$1"; }
+
+# --- ptpcamerad suppressor ---------------------------------------------------
+# While this PID is set, a background loop reaps ptpcamerad ~2.5x/sec so it can
+# never hold the USB interface long enough to block a single mtp-* call.
+SUPPRESS_PID=""
+ptpcam_suppress_start() {
+    [ -n "$SUPPRESS_PID" ] && return 0
+    ( while :; do pkill -9 -x ptpcamerad 2>/dev/null || true; sleep 0.4; done ) &
+    SUPPRESS_PID=$!
+}
+ptpcam_suppress_stop() {
+    [ -n "$SUPPRESS_PID" ] || return 0
+    kill "$SUPPRESS_PID" 2>/dev/null || true
+    SUPPRESS_PID=""
+}
+cleanup() { ptpcam_suppress_stop; }
+trap cleanup EXIT
 
 # --- Step 1: Detect the phone ------------------------------------------------
 header "Detecting Nokia Lumia 1020"
+ptpcam_suppress_start
+info "Holding the macOS camera daemon (ptpcamerad) so libmtp can read the phone."
 
-DETECT_OUTPUT=$(mtp-detect 2>&1) || true
+DETECT_OUTPUT=""
+for attempt in 1 2 3 4; do
+    DETECT_OUTPUT=$(mtp-detect 2>&1) || true
+    is_busy "$DETECT_OUTPUT" || break
+    warn "USB interface still busy (attempt $attempt/4) — waiting for it to free…"
+    sleep 1
+done
 
-if echo "$DETECT_OUTPUT" | grep -qi "No raw devices found\|No devices"; then
+if is_busy "$DETECT_OUTPUT"; then
+    error "The USB interface is locked by something other than ptpcamerad."
+    echo "  This script already suppresses ptpcamerad, so the remaining holder is"
+    echo "  usually Google Chrome or the ChatGPT/Codex desktop app (both probe USB)."
+    echo "  Quit those, keep the phone unlocked in MTP mode, and re-run."
+    exit 1
+fi
+if is_nodevice "$DETECT_OUTPUT"; then
     error "No MTP device found."
-    echo ""
-    echo "Troubleshooting:"
-    echo "  1. Connect the Lumia 1020 to your Mac via USB cable"
-    echo "  2. Unlock the phone screen"
-    echo "  3. On the phone, pull down the notification shade"
-    echo "  4. Tap the USB notification → select 'Media device (MTP)'"
-    echo "  5. Wait a few seconds and run this script again"
-    echo ""
-    echo "If the phone is connected but not detected:"
-    echo "  - Try a different USB cable (some are charge-only)"
-    echo "  - Try a different USB port"
-    echo "  - Run: mtp-detect   (to see raw USB device output)"
+    echo "  1. Connect the Lumia 1020 with a USB *data* cable (not charge-only)."
+    echo "  2. Unlock the phone and keep the screen awake."
+    echo "  3. Notification shade → USB → “Media device (MTP)”."
+    echo "  4. Wait ~3s and re-run. (Try another port/cable if still nothing.)"
     exit 1
 fi
 
-# Extract device info
-DEVICE_NAME=$(echo "$DETECT_OUTPUT" | grep "Friendly name:" | sed 's/.*Friendly name: *//' | head -1)
-DEVICE_MODEL=$(echo "$DETECT_OUTPUT" | grep "Model:" | sed 's/.*Model: *//' | head -1)
-DEVICE_SERIAL=$(echo "$DETECT_OUTPUT" | grep "Serial number:" | sed 's/.*Serial number: *//' | head -1)
+DEVICE_NAME=$(echo "$DETECT_OUTPUT" | grep -m1 'Friendly name:' | sed 's/.*Friendly name: *//' || true)
+case "$DEVICE_NAME" in ""|"Nokia Lumia WP8") DEVICE_NAME="Nokia Lumia 1020" ;; esac
+success "Found: $DEVICE_NAME"
 
-if [ -n "$DEVICE_NAME" ]; then
-    success "Found: $DEVICE_NAME ($DEVICE_MODEL)"
-    [ -n "$DEVICE_SERIAL" ] && info "Serial: $DEVICE_SERIAL"
-else
-    success "MTP device detected"
-fi
+# --- Step 2: Scan for DNG files ----------------------------------------------
+header "Scanning phone storage"
 
-# --- Step 2: List files on the phone -----------------------------------------
-header "Scanning phone storage for DNG files"
+FILETREE=""
+for attempt in 1 2 3 4; do
+    FILETREE=$(mtp-filetree 2>&1) || true
+    is_busy "$FILETREE" || break
+    sleep 1
+done
+if is_busy "$FILETREE"; then error "Lost the USB interface while scanning."; exit 1; fi
+if is_nodevice "$FILETREE"; then error "Lost connection to device."; exit 1; fi
 
-# Get the full file tree
-FILETREE=$(mtp-filetree 2>&1) || true
+# Real mtp-filetree format here is "<indent><id> <name>" (id FIRST, no brackets).
+# `read -r fid name` splits the first token (id) from the rest (name); leading
+# whitespace is trimmed automatically. We only keep *.dng lines.
+DNG_IDS=(); DNG_NAMES=()
+while IFS= read -r line; do
+    read -r fid name <<<"$line" || continue
+    [[ "$fid" =~ ^[0-9]+$ ]] || continue
+    [ -n "$name" ] || continue
+    ext=$(printf '%s' "${name##*.}" | tr 'A-Z' 'a-z')
+    [ "$ext" = "dng" ] || continue
+    DNG_IDS+=("$fid"); DNG_NAMES+=("$name")
+done <<<"$FILETREE"
 
-if echo "$FILETREE" | grep -qi "No raw devices\|No devices"; then
-    error "Lost connection to device. Please reconnect and try again."
-    exit 1
-fi
+DNG_COUNT=${#DNG_IDS[@]}
 
-# Find all DNG files (case-insensitive)
-DNG_FILES=$(echo "$FILETREE" | grep -i '\.dng$' || true)
-
-if [ -z "$DNG_FILES" ]; then
+if [ "$DNG_COUNT" -eq 0 ]; then
     warn "No DNG files found on the phone."
-    echo ""
-    echo "Make sure you're shooting in RAW mode:"
-    echo "  1. Open Nokia Camera (or Pro Cam) on the phone"
-    echo "  2. Go to Settings → tap the gear icon"
-    echo "  3. Set 'Capture mode' to 'RAW + JPEG' or 'RAW only'"
-    echo "  4. Take some photos, then reconnect and run this script"
+    echo "  Shoot in RAW mode for future photos:"
+    echo "  Nokia Camera → Settings → Capture mode → RAW + JPEG"
     exit 0
 fi
-
-DNG_COUNT=$(echo "$DNG_FILES" | wc -l | tr -d ' ')
 info "Found $DNG_COUNT DNG file(s) on the phone"
 
 # --- List-only mode ----------------------------------------------------------
 if [ "$LIST_ONLY" = true ]; then
     header "DNG files on phone"
-    echo "$DNG_FILES" | while IFS= read -r line; do
-        FILENAME=$(echo "$line" | sed 's/.*\///' | sed 's/ *$//')
-        FILEID=$(echo "$line" | grep -o '[0-9]*$' || true)
-        echo "  📷 $FILENAME (ID: $FILEID)"
+    for i in "${!DNG_IDS[@]}"; do
+        echo "  📷 ${DNG_NAMES[$i]}  (ID ${DNG_IDS[$i]})"
     done
     exit 0
 fi
 
-# --- Step 3: Create destination directory ------------------------------------
+# --- Step 3: Destination -----------------------------------------------------
 mkdir -p "$DEST"
+touch "$HISTORY_FILE"
 info "Destination: $DEST"
 
-# --- Step 4: Download new DNG files ------------------------------------------
+# --- Step 4: Download (counters live in the main shell, not a subshell) ------
 header "Downloading DNG files"
+DOWNLOADED=0; SKIPPED=0; FAILED=0
 
-DOWNLOADED=0
-SKIPPED=0
-FAILED=0
-DOWNLOADED_FILES=()
+for i in "${!DNG_IDS[@]}"; do
+    fid="${DNG_IDS[$i]}"; name="${DNG_NAMES[$i]}"
 
-# Create history file if it doesn't exist
-touch "$HISTORY_FILE"
-
-echo "$DNG_FILES" | while IFS= read -r line; do
-    # Parse the filetree line: "  /path/to/file.dng  [fileid]"
-    FILEPATH=$(echo "$line" | sed 's/ *\[.*$//' | sed 's/^ *//')
-    FILEID=$(echo "$line" | grep -o '\[[0-9]*\]' | tr -d '[]' || true)
-    FILENAME=$(basename "$FILEPATH")
-
-    # Skip if no file ID found
-    if [ -z "$FILEID" ]; then
-        warn "Could not parse file ID for: $FILENAME"
-        FAILED=$((FAILED + 1))
-        continue
+    if [ "$ALL" = false ] && grep -qF "$fid:$name" "$HISTORY_FILE" 2>/dev/null; then
+        SKIPPED=$((SKIPPED+1)); continue
+    fi
+    if [ "$ALL" = false ] && [ -f "$DEST/$name" ]; then
+        info "Already exists: $name (skipping)"
+        echo "$fid:$name" >> "$HISTORY_FILE"
+        SKIPPED=$((SKIPPED+1)); continue
     fi
 
-    # Check if already downloaded (unless --all)
-    if [ "$ALL" = false ] && grep -qF "$FILEID:$FILENAME" "$HISTORY_FILE" 2>/dev/null; then
-        SKIPPED=$((SKIPPED + 1))
-        continue
-    fi
-
-    # Check if file already exists in destination
-    if [ "$ALL" = false ] && [ -f "$DEST/$FILENAME" ]; then
-        info "Already exists: $FILENAME (skipping)"
-        echo "$FILEID:$FILENAME" >> "$HISTORY_FILE"
-        SKIPPED=$((SKIPPED + 1))
-        continue
-    fi
-
-    # Download the file
-    info "Downloading: $FILENAME ..."
-    if mtp-getfile "$FILEID" "$DEST/$FILENAME" 2>/dev/null; then
-        success "  ✓ $FILENAME"
-        echo "$FILEID:$FILENAME" >> "$HISTORY_FILE"
-        DOWNLOADED=$((DOWNLOADED + 1))
-        DOWNLOADED_FILES+=("$DEST/$FILENAME")
+    info "Downloading: $name …"
+    ok=0
+    for t in 1 2 3; do
+        if mtp-getfile "$fid" "$DEST/$name" >/dev/null 2>&1; then ok=1; break; fi
+        warn "  retry $t/3 for $name (interface contention?)"
+        sleep 1
+    done
+    if [ "$ok" = 1 ]; then
+        success "  ✓ $name"
+        echo "$fid:$name" >> "$HISTORY_FILE"
+        DOWNLOADED=$((DOWNLOADED+1))
     else
-        error "  ✗ Failed to download: $FILENAME"
-        FAILED=$((FAILED + 1))
+        error "  ✗ Failed: $name"
+        FAILED=$((FAILED+1))
     fi
 done
 
 # --- Step 5: Summary ---------------------------------------------------------
 header "Transfer Complete"
-info "Downloaded: $DOWNLOADED file(s)"
-info "Skipped:    $SKIPPED file(s) (already transferred)"
-[ "$FAILED" -gt 0 ] && warn "Failed:     $FAILED file(s)"
-info "Files saved to: $DEST"
+info "Downloaded: $DOWNLOADED"
+info "Skipped:    $SKIPPED (already transferred)"
+[ "$FAILED" -gt 0 ] && warn "Failed:     $FAILED"
+info "Saved to:   $DEST"
 
 # --- Step 6: Optional Lightroom import ---------------------------------------
 if [ "$IMPORT" = true ] && [ "$DOWNLOADED" -gt 0 ]; then
     header "Importing into Lightroom Classic"
-
     if [ -d "$LIGHTROOM_APP" ]; then
-        info "Opening Lightroom Classic with folder: $DEST"
         open -a "Adobe Lightroom Classic" "$DEST"
-        success "Lightroom Classic launched. Use File → Import to add the photos."
+        success "Lightroom Classic launched → use File → Import."
     else
-        warn "Lightroom Classic not found at: $LIGHTROOM_APP"
-        info "You can manually import from: $DEST"
+        warn "Lightroom Classic not found at $LIGHTROOM_APP"
     fi
 fi
 
-echo ""
-success "Done! 📷"
+echo ""; success "Done! 📷"

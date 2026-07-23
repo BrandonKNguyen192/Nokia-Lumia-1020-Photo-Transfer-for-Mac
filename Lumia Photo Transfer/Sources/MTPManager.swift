@@ -88,53 +88,52 @@ class MTPManager: ObservableObject {
             return
         }
 
+        // Real mtp-filetree format on this libmtp is "<indent><id> <name>" — the
+        // numeric id comes FIRST, with no brackets and no full path. (The previous
+        // parser assumed "path [id]" and silently matched nothing, which is why a
+        // *successful* read still showed zero photos.) Directories share the same
+        // shape but carry no image extension, so the whitelist drops them.
         let lines = output.components(separatedBy: .newlines)
-        var dngFiles: [PhotoItem] = []
-        var jpegFiles: [String: PhotoItem] = [:]
-        var allFiles: [(path: String, id: String, name: String, size: UInt64)] = []
-
+        var parsed: [(id: String, name: String, ext: String)] = []
         for line in lines {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
-            guard !trimmed.isEmpty else { continue }
-            guard let idRange = trimmed.range(of: " [", options: .backwards) else { continue }
-            let pathPart = String(trimmed[trimmed.startIndex..<idRange.lowerBound])
-            let idPart = String(trimmed[idRange.upperBound...])
-                .replacingOccurrences(of: "]", with: "")
+            guard !trimmed.isEmpty, let sp = trimmed.firstIndex(of: " ") else { continue }
+            let idStr = String(trimmed[trimmed.startIndex..<sp])
+            guard UInt32(idStr) != nil else { continue }                 // 1st token = id
+            let name = String(trimmed[trimmed.index(after: sp)...])
                 .trimmingCharacters(in: .whitespaces)
-            guard UInt32(idPart) != nil else { continue }
-            let filename = (pathPart as NSString).lastPathComponent
-            let ext = (filename as NSString).pathExtension.lowercased()
-            guard ["dng", "jpg", "jpeg"].contains(ext) else { continue }
-            allFiles.append((path: pathPart, id: idPart, name: filename, size: 0))
+            guard !name.isEmpty else { continue }
+            let ext = (name as NSString).pathExtension.lowercased()
+            guard ext == "dng" || ext == "jpg" || ext == "jpeg" else { continue }
+            parsed.append((idStr, name, ext))
         }
 
-        for file in allFiles {
-            let ext = (file.name as NSString).pathExtension.lowercased()
-            if ext == "jpg" || ext == "jpeg" {
-                let baseName = (file.name as NSString).deletingPathExtension
-                jpegFiles[baseName] = PhotoItem(
-                    id: file.id, filename: file.name, filepath: file.path,
-                    fileSize: file.size, isDNG: false, isJPEG: true,
-                    dngFileID: nil, jpegFileID: nil, jpegFilename: nil)
-            }
+        // Pair DNG <-> JPEG by basename with the trailing "_*highres" stripped:
+        //   WP_<ts>_Raw__highres.dng  +  WP_<ts>_Raw.jpg  ->  key "WP_<ts>_Raw"
+        var jpegByKey: [String: (id: String, name: String)] = [:]
+        for it in parsed where it.ext == "jpg" || it.ext == "jpeg" {
+            jpegByKey[Self.pairKey(it.name)] = (it.id, it.name)
         }
 
-        for file in allFiles {
-            let ext = (file.name as NSString).pathExtension.lowercased()
-            if ext == "dng" {
-                let baseName = (file.name as NSString).deletingPathExtension
-                    .replacingOccurrences(of: "_Raw_highres", with: "")
-                let pairedJPEG = jpegFiles[baseName]
+        var dngFiles: [PhotoItem] = []
+        var jpegOnly: [PhotoItem] = []
+        for it in parsed {
+            if it.ext == "dng" {
+                let pj = jpegByKey[Self.pairKey(it.name)]
                 dngFiles.append(PhotoItem(
-                    id: file.id, filename: file.name, filepath: file.path,
-                    fileSize: file.size, isDNG: true, isJPEG: false,
-                    dngFileID: nil, jpegFileID: pairedJPEG?.id,
-                    jpegFilename: pairedJPEG?.filename))
+                    id: it.id, filename: it.name, filepath: it.name,
+                    fileSize: 0, isDNG: true, isJPEG: false,
+                    dngFileID: nil, jpegFileID: pj?.id, jpegFilename: pj?.name))
+            } else {
+                jpegOnly.append(PhotoItem(
+                    id: it.id, filename: it.name, filepath: it.name,
+                    fileSize: 0, isDNG: false, isJPEG: true,
+                    dngFileID: nil, jpegFileID: nil, jpegFilename: nil))
             }
         }
 
         if dngFiles.isEmpty {
-            photos = Array(jpegFiles.values).sorted { $0.filename < $1.filename }
+            photos = jpegOnly.sorted { $0.filename < $1.filename }
         } else {
             photos = dngFiles.sorted { $0.filename < $1.filename }
         }
@@ -175,6 +174,7 @@ class MTPManager: ObservableObject {
         if FileManager.default.fileExists(atPath: thumbPath.path) { return thumbPath }
 
         let destPath = thumbDir.appendingPathComponent(targetName)
+        await reclaimPtpcamerad()
         _ = await runCommand("mtp-getfile", arguments: [targetID, destPath.path])
 
         if FileManager.default.fileExists(atPath: destPath.path) {
@@ -190,8 +190,16 @@ class MTPManager: ObservableObject {
 
     func downloadFile(_ photo: PhotoItem, to destination: URL) async -> Bool {
         let destPath = destination.appendingPathComponent(photo.filename)
-        _ = await runCommand("mtp-getfile", arguments: [photo.id, destPath.path])
-        return FileManager.default.fileExists(atPath: destPath.path)
+        // ptpcamerad respawns ~2s after we free it and re-grabs the interface, so
+        // release it right before each getfile and retry on contention. A 0-byte
+        // leftover from a failed getfile does NOT count as success.
+        for _ in 0..<3 {
+            await reclaimPtpcamerad()
+            _ = await runCommand("mtp-getfile", arguments: [photo.id, destPath.path])
+            if Self.nonEmptyFile(at: destPath) { return true }
+            await Self.pause(0.8)
+        }
+        return Self.nonEmptyFile(at: destPath)
     }
 
     func downloadFiles(_ photos: [PhotoItem], to destination: URL,
@@ -247,12 +255,17 @@ class MTPManager: ObservableObject {
     /// Bounded: `attempts` tries ~1s apart, so a persistent lock fails fast and a
     /// clean success returns on try 1.
     private func runMTPWithRetry(_ command: String, arguments: [String],
-                                 attempts: Int = 3) async -> String {
-        var output = ""
-        for i in 0..<attempts {
+                                 attempts: Int = 4) async -> String {
+        // Try once without touching ptpcamerad, so an idle launch with no phone —
+        // or an uncontended phone — never kills the camera daemon. If that comes
+        // back BUSY we free the daemon and retry; NODEVICE just retries.
+        var output = await runCommand(command, arguments: arguments)
+        if !Self.isTransientFailure(output) { return output }
+        for _ in 1..<attempts {
+            if Self.isBusy(output) { await reclaimPtpcamerad() }
+            await Self.pause(0.7)
             output = await runCommand(command, arguments: arguments)
             if !Self.isTransientFailure(output) { return output }
-            if i < attempts - 1 { await Self.pause(1.0) }
         }
         return output
     }
@@ -264,20 +277,47 @@ class MTPManager: ObservableObject {
         }
     }
 
+    /// Stop macOS’s ptpcamerad, which grabs the Lumia’s USB interface exclusively
+    /// and causes libusb_claim_interface() = -3. It runs as the current user (no
+    /// sudo) and launchd respawns it afterwards, so this is safe and reversible.
+    /// Done via /bin/bash so we don’t depend on pkill being on PATH.
+    private func reclaimPtpcamerad() async {
+        _ = await runCommand("/bin/bash", arguments: [
+            "-c", "pkill -9 -x ptpcamerad 2>/dev/null || true"
+        ])
+    }
+
+    /// Pairing key: basename minus extension, with a trailing "_*highres" removed
+    /// so "WP_<ts>_Raw__highres" (DNG) and "WP_<ts>_Raw" (JPEG) both key to
+    /// "WP_<ts>_Raw".
+    private static func pairKey(_ name: String) -> String {
+        let base = (name as NSString).deletingPathExtension
+        if let r = base.range(of: "_+highres$", options: .regularExpression) {
+            return String(base[base.startIndex..<r.lowerBound])
+        }
+        return base
+    }
+
+    private static func nonEmptyFile(at url: URL) -> Bool {
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let size = attrs[.size] as? NSNumber else { return false }
+        return size.int64Value > 0
+    }
+
     private static let busyMessage: String =
-        "Your Mac sees the Lumia 1020, but another app has its USB interface locked, "
-        + "so libmtp can’t read files (libusb error -3 / LIBUSB_ERROR_BUSY).\n\n"
-        + "On this Mac the usual holders are the ChatGPT / Codex desktop app and "
-        + "Google Chrome — both have been caught opening the device in the system log. "
-        + "macOS Photos / Image Capture auto-import can also grab it.\n\n"
+        "Your Mac sees the Lumia 1020, but its USB interface is locked, so libmtp "
+        + "can’t read files (libusb error -3 / LIBUSB_ERROR_BUSY).\n\n"
+        + "This app already tries to release the usual culprit — macOS’s camera "
+        + "daemon (ptpcamerad, behind Photos / Image Capture) — automatically. If "
+        + "you’re still seeing this, the interface is held by something else, most "
+        + "often Google Chrome or the ChatGPT / Codex desktop app (both probe USB).\n\n"
         + "To free it:\n"
         + "1) Quit Google Chrome (and any USB-using tab/extension).\n"
-        + "2) Quit the ChatGPT / Codex desktop app — this ends the current Codex "
-        + "session, so do the transfer from Terminal with ./lumia-transfer.sh, or "
-        + "relaunch Codex afterwards.\n"
-        + "3) If a Photos or Image Capture window opened on plug-in, quit it too.\n"
-        + "4) Unplug → wait 5s → replug into a direct port, unlock the phone, set MTP, "
-        + "then press Refresh.\n\n"
+        + "2) Quit the ChatGPT / Codex desktop app — that ends this Codex session, "
+        + "so run the transfer from Terminal with ./lumia-transfer.sh (it releases "
+        + "ptpcamerad itself and needs nothing quit), then relaunch Codex.\n"
+        + "3) Unplug → wait 5s → replug into a direct port, unlock the phone, set "
+        + "MTP, then press Refresh.\n\n"
         + "The libmtp output below shows the exact libusb_claim_interface() = -3 line."
 
     /// libmtp’s "Friendly name" for the 1020 is the generic "Nokia Lumia WP8"; map the
