@@ -91,6 +91,18 @@ struct ContentView: View {
             .frame(width: 100)
             .disabled(mtp.photos.isEmpty)
 
+            // Color profile picker
+            if !mtp.availableProfiles.isEmpty {
+                Picker("Profile", selection: $mtp.selectedProfile) {
+                    Text("None").tag(URL?.none)
+                    ForEach(mtp.availableProfiles, id: \.self) { url in
+                        Text(url.deletingPathExtension().lastPathComponent)
+                            .tag(Optional(url))
+                    }
+                }
+                .frame(width: 180)
+            }
+
             Divider().frame(height: 20)
 
             // Selection count

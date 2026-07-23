@@ -28,12 +28,56 @@ class MTPManager: ObservableObject {
     /// Surfaced in the UI so connection problems are diagnosable.
     @Published var rawDiagnostic: String = ""
 
+    // MARK: - Color Profile Pipeline
+
+    /// Available .xmp profile files found in the Profiles/ folder.
+    @Published var availableProfiles: [URL] = []
+    /// The profile the user has selected for sidecar writing on import (nil = none).
+    @Published var selectedProfile: URL? = nil
+
     private let tempDir: URL
 
     init() {
         tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("LumiaPhotoTransfer", isDirectory: true)
         try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        scanProfiles()
+    }
+
+    // MARK: - Profile Scanning
+
+    func scanProfiles() {
+        var found: [URL] = []
+        let dirs = [Self.findProfilesDir(),
+                    FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
+                        .first?.appendingPathComponent("Lumia Photo Transfer/Profiles", isDirectory: true)
+        ].compactMap { $0 }
+        for dir in dirs {
+            if let contents = try? FileManager.default.contentsOfDirectory(
+                at: dir, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) {
+                found.append(contentsOf: contents.filter { $0.pathExtension.lowercased() == "xmp" })
+            }
+        }
+        availableProfiles = found.sorted { $0.lastPathComponent < $1.lastPathComponent }
+    }
+
+    private static func findProfilesDir() -> URL? {
+        let fm = FileManager.default
+        var dir = URL(fileURLWithPath: ProcessInfo.processInfo.arguments[0]).deletingLastPathComponent()
+        for _ in 0..<6 {
+            let c = dir.appendingPathComponent("Profiles", isDirectory: true)
+            if fm.fileExists(atPath: c.path) { return c }
+            dir = dir.deletingLastPathComponent()
+        }
+        let cwd = URL(fileURLWithPath: fm.currentDirectoryPath).appendingPathComponent("Profiles", isDirectory: true)
+        return fm.fileExists(atPath: cwd.path) ? cwd : nil
+    }
+
+    private func writeProfileSidecar(for filename: String, in destination: URL) {
+        guard let profile = selectedProfile else { return }
+        let base = (filename as NSString).deletingPathExtension
+        let sidecar = destination.appendingPathComponent(base + ".xmp")
+        try? FileManager.default.copyItem(at: profile, to: sidecar)
     }
 
     // MARK: - Device Detection
@@ -255,7 +299,10 @@ class MTPManager: ObservableObject {
         for _ in 0..<3 {
             await reclaimPtpcamerad()
             _ = await runCommand("mtp-getfile", arguments: [photo.id, destPath.path])
-            if Self.nonEmptyFile(at: destPath) { return true }
+            if Self.nonEmptyFile(at: destPath) {
+                writeProfileSidecar(for: photo.filename, in: destination)
+                return true
+            }
             await Self.pause(0.8)
         }
         // Every attempt failed. Remove any 0-byte/partial leftover so it can't
@@ -265,6 +312,7 @@ class MTPManager: ObservableObject {
             try? FileManager.default.removeItem(at: destPath)
             return false
         }
+        writeProfileSidecar(for: photo.filename, in: destination)
         return true
     }
 

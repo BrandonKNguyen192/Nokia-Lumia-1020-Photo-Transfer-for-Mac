@@ -8,6 +8,7 @@
 #   ./lumia-transfer.sh --all            # Re-download ALL DNGs (ignore history)
 #   ./lumia-transfer.sh --list           # Just list DNG files on the phone
 #   ./lumia-transfer.sh --import         # Download + import into Lightroom
+#   ./lumia-transfer.sh --profile P.xmp  # Also write XMP sidecar (color profile)
 #
 # NOTE on the macOS "camera daemon" (ptpcamerad):
 #   macOS's ptpcamerad grabs the Lumia's USB interface exclusively, which makes
@@ -30,18 +31,22 @@ RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 BLUE='\033[0;34m'; CYAN='\033[0;36m'; NC='\033[0m'
 
 # --- Parse arguments ---------------------------------------------------------
-DEST="$DEFAULT_DEST"; ALL=false; LIST_ONLY=false; IMPORT=false
+DEST="$DEFAULT_DEST"; ALL=false; LIST_ONLY=false; IMPORT=false; PROFILE=""
+NEXT_IS_PROFILE=false
 for arg in "$@"; do
+    if [ "$NEXT_IS_PROFILE" = true ]; then PROFILE="$arg"; NEXT_IS_PROFILE=false; continue; fi
     case "$arg" in
-        --all)    ALL=true ;;
-        --list)   LIST_ONLY=true ;;
-        --import) IMPORT=true ;;
+        --all)     ALL=true ;;
+        --list)    LIST_ONLY=true ;;
+        --import)  IMPORT=true ;;
+        --profile) NEXT_IS_PROFILE=true ;;
         --help|-h)
-            sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
+            sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
             exit 0 ;;
-        *)        DEST="$arg" ;;
+        *)         DEST="$arg" ;;
     esac
 done
+
 
 # --- Helpers -----------------------------------------------------------------
 info()    { echo -e "${BLUE}[INFO]${NC} $*"; }
@@ -49,6 +54,16 @@ success() { echo -e "${GREEN}[ OK ]${NC} $*"; }
 warn()    { echo -e "${YELLOW}[WARN]${NC} $*"; }
 error()   { echo -e "${RED}[ERR ]${NC} $*" >&2; }
 header()  { echo -e "\n${CYAN}━━━ $* ━━━${NC}"; }
+
+# Validate profile path if provided
+if [ -n "$PROFILE" ]; then
+    if [ ! -f "$PROFILE" ]; then
+        error "Profile not found: $PROFILE"
+        exit 1
+    fi
+    PROFILE=$(cd "$(dirname "$PROFILE")" && pwd)/$(basename "$PROFILE")
+    info "Color profile: $(basename "$PROFILE")"
+fi
 
 # libmtp merges stdout+stderr; these signatures mean another process holds the
 # MTP interface. IMPORTANT: only ever call these in a condition position
@@ -162,7 +177,9 @@ DOWNLOADED=0; SKIPPED=0; FAILED=0
 for i in "${!DNG_IDS[@]}"; do
     fid="${DNG_IDS[$i]}"; name="${DNG_NAMES[$i]}"
 
-    if [ "$ALL" = false ] && grep -qF "$fid:$name" "$HISTORY_FILE" 2>/dev/null; then
+    # -x = whole-line match. Plain -qF matches substrings, so history line
+    # "10:IMG_1.dng" would falsely match a different file "0:IMG_1.dng" and skip it.
+    if [ "$ALL" = false ] && grep -qxF "$fid:$name" "$HISTORY_FILE" 2>/dev/null; then
         SKIPPED=$((SKIPPED+1)); continue
     fi
     if [ "$ALL" = false ] && [ -f "$DEST/$name" ]; then
@@ -182,6 +199,11 @@ for i in "${!DNG_IDS[@]}"; do
         success "  ✓ $name"
         echo "$fid:$name" >> "$HISTORY_FILE"
         DOWNLOADED=$((DOWNLOADED+1))
+        # Write color profile sidecar if --profile was given
+        if [ -n "$PROFILE" ]; then
+            base="${name%.*}"
+            cp "$PROFILE" "$DEST/${base}.xmp"
+        fi
     else
         error "  ✗ Failed: $name"
         FAILED=$((FAILED+1))
