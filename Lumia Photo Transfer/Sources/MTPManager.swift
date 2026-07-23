@@ -40,8 +40,17 @@ class MTPManager: ObservableObject {
 
     func detectDevice() async {
         state = .detecting
-        let output = await runCommand("mtp-detect", arguments: [])
+        let output = await runMTPWithRetry("mtp-detect", arguments: [])
         rawDiagnostic = Self.trimDiagnostic(output)
+
+        // Another process holds the MTP interface (libusb -3 / BUSY). Check this
+        // BEFORE the "connected" path, otherwise we show a fake green dot while
+        // every subsequent read silently fails (the original screenshot bug).
+        if Self.isBusy(output) {
+            deviceInfo = nil
+            state = .error(Self.busyMessage)
+            return
+        }
 
         if output.contains("No raw devices found") || output.contains("No devices") {
             deviceInfo = nil
@@ -53,8 +62,7 @@ class MTPManager: ObservableObject {
             return
         }
 
-        let name = extractField(output, field: "Friendly name:")
-            ?? (output.contains("Nokia Lumia WP8") ? "Nokia Lumia WP8" : "MTP Device")
+        let name = Self.friendlyName(from: output)
         let model = extractField(output, field: "Model:") ?? "Lumia 1020"
         let serial = extractField(output, field: "Serial number:") ?? ""
 
@@ -65,8 +73,14 @@ class MTPManager: ObservableObject {
 
     func scanFiles() async {
         state = .scanning
-        let output = await runCommand("mtp-filetree", arguments: [])
+        let output = await runMTPWithRetry("mtp-filetree", arguments: [])
         rawDiagnostic = Self.trimDiagnostic(output)
+
+        if Self.isBusy(output) {
+            deviceInfo = nil
+            state = .error(Self.busyMessage)
+            return
+        }
 
         if output.contains("No raw devices") || output.contains("No devices") {
             deviceInfo = nil
@@ -134,7 +148,7 @@ class MTPManager: ObservableObject {
                 + "Most common causes:\n"
                 + "• The phone screen is LOCKED — unlock it and keep it awake.\n"
                 + "• USB mode isn’t “Media device (MTP)” — set it in the notification shade.\n"
-                + "• A flaky USB link (libusb claim_interface error) — unplug, wait 5s, "
+                + "• A flaky USB link — unplug, wait 5s, "
                 + "replug firmly into a direct port (no hub), unlock, then Detect.\n\n"
                 + "Tip: also try opening OpenMTP (/Applications) as a cross-check — "
                 + "if it sees files where this app doesn’t, tell me and I’ll swap the backend.")
@@ -206,6 +220,98 @@ class MTPManager: ObservableObject {
         }
         let trimmed = interesting.prefix(12).joined(separator: "\n")
         return trimmed.isEmpty ? String(s.prefix(400)) : trimmed
+    }
+
+    // MARK: - MTP contention / retry helpers
+
+    /// libmtp merges stdout+stderr; these substrings appear when another process
+    /// holds the MTP interface (libusb error -3 / LIBUSB_ERROR_BUSY). A persistent
+    /// holder (e.g. the ChatGPT/Codex desktop app or Chrome) can’t be retried away.
+    private static func isBusy(_ s: String) -> Bool {
+        let l = s.lowercased()
+        return l.contains("claim_interface")
+            || l.contains("unable to initialize device")
+            || l.contains("unable to open raw device")
+            || l.contains("libmtp panic")
+    }
+
+    /// Superset of isBusy plus the "nothing on the bus" signatures — exactly the
+    /// cases where the *next* attempt might succeed (transient plug-in race or a
+    /// momentary contention that releases between tries).
+    private static func isTransientFailure(_ s: String) -> Bool {
+        let l = s.lowercased()
+        return isBusy(s) || l.contains("no raw devices") || l.contains("no devices")
+    }
+
+    /// Run an mtp-* command, retrying briefly while the result looks transient.
+    /// Bounded: `attempts` tries ~1s apart, so a persistent lock fails fast and a
+    /// clean success returns on try 1.
+    private func runMTPWithRetry(_ command: String, arguments: [String],
+                                 attempts: Int = 3) async -> String {
+        var output = ""
+        for i in 0..<attempts {
+            output = await runCommand(command, arguments: arguments)
+            if !Self.isTransientFailure(output) { return output }
+            if i < attempts - 1 { await Self.pause(1.0) }
+        }
+        return output
+    }
+
+    /// Deprecation-free, availability-free async sleep.
+    private static func pause(_ seconds: Double) async {
+        await withCheckedContinuation { cont in
+            DispatchQueue.global().asyncAfter(deadline: .now() + seconds) { cont.resume() }
+        }
+    }
+
+    private static let busyMessage: String =
+        "Your Mac sees the Lumia 1020, but another app has its USB interface locked, "
+        + "so libmtp can’t read files (libusb error -3 / LIBUSB_ERROR_BUSY).\n\n"
+        + "On this Mac the usual holders are the ChatGPT / Codex desktop app and "
+        + "Google Chrome — both have been caught opening the device in the system log. "
+        + "macOS Photos / Image Capture auto-import can also grab it.\n\n"
+        + "To free it:\n"
+        + "1) Quit Google Chrome (and any USB-using tab/extension).\n"
+        + "2) Quit the ChatGPT / Codex desktop app — this ends the current Codex "
+        + "session, so do the transfer from Terminal with ./lumia-transfer.sh, or "
+        + "relaunch Codex afterwards.\n"
+        + "3) If a Photos or Image Capture window opened on plug-in, quit it too.\n"
+        + "4) Unplug → wait 5s → replug into a direct port, unlock the phone, set MTP, "
+        + "then press Refresh.\n\n"
+        + "The libmtp output below shows the exact libusb_claim_interface() = -3 line."
+
+    /// libmtp’s "Friendly name" for the 1020 is the generic "Nokia Lumia WP8"; map the
+    /// known VID/PID (and the kernel-reported RM-877) to the real marketing name.
+    private static func friendlyName(from output: String) -> String {
+        let map: [String: String] = [
+            "0421:0661": "Nokia Lumia 1020",
+            "0421:0662": "Nokia Lumia 1020",
+            "0421:0663": "Nokia Lumia 1020",
+            "0421:06fc": "Nokia Lumia 1020",
+        ]
+        if let re = try? NSRegularExpression(pattern: "VID=([0-9A-Fa-f]+)\\s+and\\s+PID=([0-9A-Fa-f]+)"),
+           let m = re.firstMatch(in: output, range: NSRange(location: 0, length: (output as NSString).length)),
+           m.numberOfRanges >= 3 {
+            let ns = output as NSString
+            let vid = pad(ns.substring(with: m.range(at: 1)).lowercased(), to: 4)
+            let pid = pad(ns.substring(with: m.range(at: 2)).lowercased(), to: 4)
+            if let nice = map["\(vid):\(pid)"] { return nice }
+        }
+        if let f = field(output, "Friendly name:"), !f.isEmpty, f != "Nokia Lumia WP8" { return f }
+        if output.contains("Nokia Lumia WP8") { return "Nokia Lumia 1020" }
+        return "MTP Device"
+    }
+
+    private static func pad(_ s: String, to n: Int) -> String {
+        s.count >= n ? s : String(repeating: "0", count: n - s.count) + s
+    }
+
+    private static func field(_ text: String, _ name: String) -> String? {
+        for line in text.components(separatedBy: .newlines) where line.contains(name) {
+            let parts = line.components(separatedBy: name)
+            if parts.count > 1 { return parts[1].trimmingCharacters(in: .whitespaces) }
+        }
+        return nil
     }
 
     private func extractField(_ text: String, field: String) -> String? {
