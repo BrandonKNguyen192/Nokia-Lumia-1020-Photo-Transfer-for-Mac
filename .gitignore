@@ -1,0 +1,19 @@
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Swift Package Manager / Xcode build artifacts (DO NOT COMMIT — ~220 MB)
+.build/
+.swiftpm/
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+DerivedData/
+
+# Compiled app bundle — rebuild with: cd "Lumia Photo Transfer" && ./build.sh
+# (ARM-only + ad-hoc signed, so not portable; source is the real artifact)
+Lumia Photo Transfer/Lumia Photo Transfer.app/
+
+# Editor / OS junk
+.vscode/
+.idea/
+*.swp
