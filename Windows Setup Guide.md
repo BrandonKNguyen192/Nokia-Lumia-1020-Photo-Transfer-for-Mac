@@ -386,3 +386,104 @@ guide so it's copy‑paste ready.
 
 > P.S. The crack in the screen has zero effect on any of this — bootloader unlock,
 > MTP/USB transfer, and WiFi transfer all work purely off the mainboard and radios.
+
+---
+
+## Appendix B — CONFIRMED device identity & exact firmware (from your `about` photo)
+
+> This appendix is **photo‑confirmed** and **supersedes** the Cyan assumption and the
+> "go look up your RM model" wording in Step 1 / Step 2 / Appendix A. Use the values
+> below as copy‑paste truth. (Read Appendix A for *why*; read this for *what to type*.)
+
+### ⚠️ Correction to Appendix A
+Your `about` page is authoritative: **Software = "Windows Phone 8.1 Update"**,
+**OS = 8.10.14226.359**, **Firmware = 3051.50009.1451.1001** → you are on
+**Lumia Denim**, *not* Cyan. The "Lumia Cyan" line in `extras+info` is a stale
+legacy label. **This changes nothing about the unlock** (WPInternals 2.9.2 fully
+supports Denim on the 1020), and the camera still writes full‑res
+`_Raw_highres.dng` on Denim — so **do not change your firmware**. Leave it as‑is.
+
+### Your device — non‑sensitive spec table
+
+| Field | Value |
+|-------|-------|
+| Phone | Nokia Lumia 1020 (internal model name **NOKIA 909**) |
+| **RM model (determined)** | **RM‑877** (AT&T / North America) |
+| Software / branch | Windows Phone 8.1 Update = **Lumia Denim** |
+| OS version | 8.10.14226.359 |
+| Firmware revision | **3051.50009.1451.1001** |
+| Hardware revision | 3.3.0.3 |
+| Radio software | 3.2.04059.1 |
+| Chip / SOC | 8960 (Snapdragon S4 / MSM8960, LTE) |
+| Screen | 768 × 1280 |
+
+> 🔒 **Privacy note — read this.** Your `about` photo also contains your **IMEI,
+> SIM ID (ICCID), MAC address, MDN (phone number) and SIM ID**. Those are
+> personally identifying / clone‑able identifiers. I have **deliberately NOT**
+> written any of them into this repo, and you should **NOT upload that photo to
+> GitHub** (even a private repo). The RM model above was derived from the
+> *carrier* of the SIM (AT&T ICCID prefix `8901410`) plus matching community
+> reports — not by storing your identifiers.
+
+### Why RM‑877 (evidence)
+1. SIM ICCID prefix `8901410` = **AT&T**; product‑code tables list **AT&T / NAM US = RM‑877**.
+2. A community device with your *identical* firmware `3051.50009.1451.1001` + AT&T
+   + the same IMEI TAC family (`356…`) is explicitly an **RM‑877**.
+3. `RM‑876` is 3G‑only → ruled out by your LTE SOC/radio.
+4. Note: the build `…1451.1001` is a *shared* Denim OTA that also flashes on
+   RM‑875, so the build number alone can't choose the RM — carrier + hardware does.
+
+### ✅ 5‑second ground‑truth check (do before flashing)
+The `RM-` number is **printed on the label under the SIM tray**, and shown at the
+top of **extras+info** as `Product code: 059xxxx` / a `RM-877_…` line.
+- If it reads **RM‑877** → use the RM‑877 firmware below. ✅ (expected)
+- If it unexpectedly reads **RM‑875** → use the RM‑875 firmware below instead.
+  (Everything else in the 10‑step plan is identical.)
+
+---
+
+### 📋 COPY‑PASTE STEP 2 — exact firmware (FFU) to download
+
+You need an FFU for **RM‑877** to act as the WPInternals "donor" (it extracts the
+bootloader loaders; it will *not* reflash your OS). Your installed build is
+`3051.50009.1451.1001` (Denim), so prefer a **Denim (3051.50009.xxxx)** FFU.
+
+**Primary — LumiaDB (recommended):**
+1. Go to **https://lumiadb.com**
+2. In the model search, type exactly: **`RM-877`**
+3. From the results pick a build whose revision starts with **`3051.50009`**
+   (Denim). If several are listed, prefer one whose provider/variant tag mentions
+   **NAM / ATT / US**; otherwise any `3051.50009` RM‑877 FFU works as a donor.
+4. Download the **`.ffu`** (~1.5 GB) → save as `C:\Lumia1020\RM-877.ffu`
+
+**Mirrors / alternates for RM‑877 (if LumiaDB rate‑limits you):**
+- HalabTech RM‑877 folder: **https://support.halabtech.com/index.php?a=downloads&b=folder&id=115821**
+- FirmwareFile RM‑877: **https://firmwarefile.com/nokia-lumia-1020-rm-877**
+- ChimeraTool lists your *exact* build `3051.50009.1451.1001` under RM‑877:
+  **https://chimeratool.com/en/firmwares/p/99** (and `/zh/.../p/94`)
+
+**Fallback — only if your SIM‑tray label says RM‑875:**
+- LumiaDB search: **`RM-875`** → pick a `3051.50009` (Denim) FFU.
+- FirmwareFile RM‑875: **https://firmwarefile.com/nokia-lumia-1020-rm-875**
+
+> The exact installed build `3051.50009.1451.1001` is a cross‑flashing Denim OTA,
+> so a *nearby* `3051.50009` FFU for the correct RM is a perfectly good donor —
+> you do **not** need a byte‑identical match for the unlock to work.
+
+---
+
+### Effect on the rest of the plan
+- **Step 1** (find RM model): already answered → **RM‑877** (verify via SIM‑tray label).
+- **Step 2** (download FFU): use the RM‑877 sources above.
+- **Steps 3–10**: unchanged. WPInternals 2.9.2 handles Denim; backup → unlock →
+  root → CMD Injector → Live Store proceeds exactly as written.
+- **Camera / DNG goal**: unaffected — Denim's Nokia/Pro Camera produces the same
+  48 MP `_Raw_highres.dng` files. No firmware change required.
+
+### TL;DR for the Mini PC run
+```
+Model to flash/unlock :  RM-877  (confirm on SIM-tray label)
+FFU to download       :  lumiadb.com  →  search "RM-877"  →  a 3051.50009.* (Denim) build
+WPInternals           :  2.9.2  (NOT the 3.0 preview)
+Installed firmware    :  3051.50009.1451.1001  (Denim) — leave it, don't change it
+```
