@@ -55,6 +55,10 @@ struct ContentView: View {
                 destinationURL = url
             }
         }
+        .task { await refresh() }
+        .onReceive(NotificationCenter.default.publisher(for: .refreshDevice)) { _ in
+            Task { await refresh() }
+        }
     }
 
     // MARK: - Header
@@ -129,11 +133,7 @@ struct ContentView: View {
 
             // Refresh
             Button {
-                Task {
-                    await mtp.detectDevice()
-                    await mtp.scanFiles()
-                    await loadAllThumbnails()
-                }
+                Task { await refresh() }
             } label: {
                 Image(systemName: "arrow.clockwise")
             }
@@ -226,13 +226,7 @@ struct ContentView: View {
                 .multilineTextAlignment(.center)
 
             Button {
-                Task {
-                    await mtp.detectDevice()
-                    if mtp.deviceInfo?.isConnected == true {
-                        await mtp.scanFiles()
-                        await loadAllThumbnails()
-                    }
-                }
+                Task { await refresh() }
             } label: {
                 Label("Detect Device", systemImage: "magnifyingglass")
                     .frame(width: 160)
@@ -358,19 +352,25 @@ struct ContentView: View {
                 .frame(maxWidth: 400)
 
             Button("Try Again") {
-                Task {
-                    await mtp.detectDevice()
-                    if mtp.deviceInfo?.isConnected == true {
-                        await mtp.scanFiles()
-                        await loadAllThumbnails()
-                    }
-                }
+                Task { await refresh() }
             }
             .buttonStyle(.borderedProminent)
 
             diagnosticPanel
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// Re-run detect → scan → thumbnails, guarding scan on a successful
+    /// detect. Single source of truth for the toolbar Refresh button,
+    /// the idle/error CTAs, the ⌘R / Device menu (via .refreshDevice),
+    /// and the one-shot launch detect in `.task`.
+    private func refresh() async {
+        await mtp.detectDevice()
+        if mtp.deviceInfo?.isConnected == true {
+            await mtp.scanFiles()
+            await loadAllThumbnails()
+        }
     }
 
     // MARK: - Actions
