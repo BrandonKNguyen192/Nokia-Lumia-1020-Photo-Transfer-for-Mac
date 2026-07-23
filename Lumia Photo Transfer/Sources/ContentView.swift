@@ -239,6 +239,8 @@ struct ContentView: View {
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
+
+            diagnosticPanel
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -307,6 +309,42 @@ struct ContentView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    // MARK: - Diagnostic panel
+
+    /// Collapsible, copyable view of the trimmed libmtp output captured
+    /// during the last detect/scan. Only renders when non-empty, so it
+    /// stays out of the way on a clean first launch.
+    @ViewBuilder
+    private var diagnosticPanel: some View {
+        if !mtp.rawDiagnostic.isEmpty {
+            DisclosureGroup("libmtp output") {
+                ScrollView {
+                    Text(mtp.rawDiagnostic)
+                        .font(.system(.caption, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(8)
+                }
+                .frame(maxHeight: 160)
+                .background(Color(nsColor: .textBackgroundColor))
+                .cornerRadius(6)
+
+                HStack {
+                    Spacer()
+                    Button {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(mtp.rawDiagnostic, forType: .string)
+                    } label: {
+                        Label("Copy", systemImage: "doc.on.doc")
+                    }
+                    .controlSize(.small)
+                }
+            }
+            .frame(maxWidth: 480)
+            .padding(.top, 4)
+        }
+    }
+
     private func errorView(message: String) -> some View {
         VStack(spacing: 16) {
             Image(systemName: "exclamationmark.triangle.fill")
@@ -329,6 +367,8 @@ struct ContentView: View {
                 }
             }
             .buttonStyle(.borderedProminent)
+
+            diagnosticPanel
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

@@ -49,8 +49,7 @@ class MTPManager: ObservableObject {
                 + "1) Connect the Lumia 1020 with a USB *data* cable (not charge-only).\n"
                 + "2) Unlock the phone and keep the screen awake.\n"
                 + "3) Pull down the notification shade → USB → “Media device (MTP)”.\n"
-                + "4) Wait ~3s, then press Detect again.\n\n"
-                + diagnosticBlock())
+                + "4) Wait ~3s, then press Detect again.")
             return
         }
 
@@ -71,8 +70,7 @@ class MTPManager: ObservableObject {
 
         if output.contains("No raw devices") || output.contains("No devices") {
             deviceInfo = nil
-            state = .error("Lost connection to device. Reconnect, unlock, and Detect again.\n\n"
-                + diagnosticBlock())
+            state = .error("Lost connection to device. Reconnect, unlock, and Detect again.")
             return
         }
 
@@ -139,8 +137,7 @@ class MTPManager: ObservableObject {
                 + "• A flaky USB link (libusb claim_interface error) — unplug, wait 5s, "
                 + "replug firmly into a direct port (no hub), unlock, then Detect.\n\n"
                 + "Tip: also try opening OpenMTP (/Applications) as a cross-check — "
-                + "if it sees files where this app doesn’t, tell me and I’ll swap the backend.\n\n"
-                + diagnosticBlock())
+                + "if it sees files where this app doesn’t, tell me and I’ll swap the backend.")
             return
         }
 
@@ -196,11 +193,6 @@ class MTPManager: ObservableObject {
     }
 
     // MARK: - Helpers
-
-    private func diagnosticBlock() -> String {
-        rawDiagnostic.isEmpty ? "(no diagnostic output captured)"
-                              : "— libmtp output —\n" + rawDiagnostic
-    }
 
     private static func trimDiagnostic(_ s: String) -> String {
         let interesting = s.components(separatedBy: .newlines).filter { line in
