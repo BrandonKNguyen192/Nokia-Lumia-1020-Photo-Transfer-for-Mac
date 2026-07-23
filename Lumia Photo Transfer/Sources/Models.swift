@@ -81,3 +81,17 @@ enum SortOption: String, CaseIterable {
     case sizeAsc = "Size ↑"
     case sizeDesc = "Size ↓"
 }
+
+// MARK: - Look Apply Mode
+
+/// How a selected colour profile ("Look") is applied on import.
+///  - `.none`:    download originals only.
+///  - `.sidecar`: also drop a `.xmp` next to each file for Lightroom to read.
+///  - `.process`: render each file through the Look ourselves (CoreImage) and
+///                write a graded JPEG to a `Processed/` subfolder — no Lightroom.
+enum ApplyMode: String, CaseIterable, Identifiable {
+    case none = "Off"
+    case sidecar = "Sidecar (LR)"
+    case process = "Process JPEG"
+    var id: String { rawValue }
+}

@@ -1,4 +1,5 @@
 import Foundation
+import LookKit
 
 // Directories that hold the Homebrew-installed mtp-* binaries.
 // A double-clicked .app only inherits /usr/bin:/bin:/usr/sbin:/sbin,
@@ -34,6 +35,10 @@ class MTPManager: ObservableObject {
     @Published var availableProfiles: [URL] = []
     /// The profile the user has selected for sidecar writing on import (nil = none).
     @Published var selectedProfile: URL? = nil
+    /// How the selected Look is applied on import (off / sidecar / standalone process).
+    @Published var applyMode: ApplyMode = .sidecar
+    /// How many files were graded by the standalone pipeline on the last import.
+    @Published var processedCount: Int = 0
 
     private let tempDir: URL
 
@@ -58,7 +63,11 @@ class MTPManager: ObservableObject {
                 found.append(contentsOf: contents.filter { $0.pathExtension.lowercased() == "xmp" })
             }
         }
-        availableProfiles = found.sorted { $0.lastPathComponent < $1.lastPathComponent }
+        // A profile can live in both the bundled Profiles/ and the user's
+        // Application Support copy; show it once (bundle wins, it's first).
+        var seen = Set<String>()
+        let unique = found.filter { seen.insert($0.lastPathComponent).inserted }
+        availableProfiles = unique.sorted { $0.lastPathComponent < $1.lastPathComponent }
     }
 
     private static func findProfilesDir() -> URL? {
@@ -291,7 +300,7 @@ class MTPManager: ObservableObject {
 
     // MARK: - File Download
 
-    func downloadFile(_ photo: PhotoItem, to destination: URL) async -> Bool {
+    func downloadFile(_ photo: PhotoItem, to destination: URL, forceSidecar: Bool = false) async -> Bool {
         let destPath = destination.appendingPathComponent(photo.filename)
         // ptpcamerad respawns ~2s after we free it and re-grabs the interface, so
         // release it right before each getfile and retry on contention. A 0-byte
@@ -300,7 +309,7 @@ class MTPManager: ObservableObject {
             await reclaimPtpcamerad()
             _ = await runCommand("mtp-getfile", arguments: [photo.id, destPath.path])
             if Self.nonEmptyFile(at: destPath) {
-                writeProfileSidecar(for: photo.filename, in: destination)
+                if applyMode == .sidecar || forceSidecar { writeProfileSidecar(for: photo.filename, in: destination) }
                 return true
             }
             await Self.pause(0.8)
@@ -312,17 +321,48 @@ class MTPManager: ObservableObject {
             try? FileManager.default.removeItem(at: destPath)
             return false
         }
-        writeProfileSidecar(for: photo.filename, in: destination)
+        if applyMode == .sidecar || forceSidecar { writeProfileSidecar(for: photo.filename, in: destination) }
         return true
     }
 
     func downloadFiles(_ photos: [PhotoItem], to destination: URL,
+                       forceSidecar: Bool = false,
                        progressHandler: @escaping (Double, String) -> Void) async -> Int {
         var successCount = 0
+        processedCount = 0
         let total = Double(max(photos.count, 1))
+
+        // Decode the Look once, off the main thread, when we'll grade on import.
+        // The standalone pipeline renders each downloaded file through the Look
+        // with CoreImage and writes a graded JPEG to <dest>/Processed/ — the
+        // originals are never touched, so this is fully non-destructive.
+        var lut: LookLUT? = nil
+        let processDir = destination.appendingPathComponent("Processed", isDirectory: true)
+        if applyMode == .process, !forceSidecar, let profile = selectedProfile {
+            progressHandler(0, "Decoding look…")
+            lut = await Task.detached(priority: .userInitiated) {
+                try? AdobeLookLUT.decode(xmpAt: profile)
+            }.value
+            if lut != nil {
+                try? FileManager.default.createDirectory(at: processDir, withIntermediateDirectories: true)
+            }
+        }
+
         for (index, photo) in photos.enumerated() {
             progressHandler(Double(index) / total, photo.filename)
-            if await downloadFile(photo, to: destination) { successCount += 1 }
+            if await downloadFile(photo, to: destination, forceSidecar: forceSidecar) {
+                successCount += 1
+                if let lut {
+                    let src = destination.appendingPathComponent(photo.filename)
+                    let base = (photo.filename as NSString).deletingPathExtension
+                    let out = processDir.appendingPathComponent("\(base).jpg")
+                    let graded = await Task.detached(priority: .userInitiated) {
+                        (try? LookProcessor().apply(lut: lut, to: src, outputURL: out,
+                                                    format: .jpeg(quality: 0.95))) != nil
+                    }.value
+                    if graded { processedCount += 1 }
+                }
+            }
         }
         progressHandler(1.0, "Done")
         return successCount

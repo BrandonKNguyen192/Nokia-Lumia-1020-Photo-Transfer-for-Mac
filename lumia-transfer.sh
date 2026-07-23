@@ -9,6 +9,9 @@
 #   ./lumia-transfer.sh --list           # Just list DNG files on the phone
 #   ./lumia-transfer.sh --import         # Download + import into Lightroom
 #   ./lumia-transfer.sh --profile P.xmp  # Also write XMP sidecar (color profile)
+#   ./lumia-transfer.sh --process P.xmp  # Grade each DNG with the Look -> Processed/
+#                                        #   (standalone, no Lightroom; needs a built
+#                                        #    lumia-look binary, see README §9)
 #
 # NOTE on the macOS "camera daemon" (ptpcamerad):
 #   macOS's ptpcamerad grabs the Lumia's USB interface exclusively, which makes
@@ -31,15 +34,17 @@ RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 BLUE='\033[0;34m'; CYAN='\033[0;36m'; NC='\033[0m'
 
 # --- Parse arguments ---------------------------------------------------------
-DEST="$DEFAULT_DEST"; ALL=false; LIST_ONLY=false; IMPORT=false; PROFILE=""
-NEXT_IS_PROFILE=false
+DEST="$DEFAULT_DEST"; ALL=false; LIST_ONLY=false; IMPORT=false; PROFILE=""; PROCESS=""
+NEXT_IS_PROFILE=false; NEXT_IS_PROCESS=false
 for arg in "$@"; do
     if [ "$NEXT_IS_PROFILE" = true ]; then PROFILE="$arg"; NEXT_IS_PROFILE=false; continue; fi
+    if [ "$NEXT_IS_PROCESS" = true ]; then PROCESS="$arg"; NEXT_IS_PROCESS=false; continue; fi
     case "$arg" in
         --all)     ALL=true ;;
         --list)    LIST_ONLY=true ;;
         --import)  IMPORT=true ;;
         --profile) NEXT_IS_PROFILE=true ;;
+        --process) NEXT_IS_PROCESS=true ;;
         --help|-h)
             sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
             exit 0 ;;
@@ -62,7 +67,27 @@ if [ -n "$PROFILE" ]; then
         exit 1
     fi
     PROFILE=$(cd "$(dirname "$PROFILE")" && pwd)/$(basename "$PROFILE")
-    info "Color profile: $(basename "$PROFILE")"
+    info "Color profile (sidecar): $(basename "$PROFILE")"
+fi
+
+# --- Standalone Look processing (no Lightroom) -------------------------------
+# --process grades each downloaded DNG with the Look via the lumia-look binary
+# built from this repo. If it isn't built yet, we warn once and skip gracefully
+# (transfer still works; only the grade is omitted).
+LUMIA_LOOK=""
+if [ -n "$PROCESS" ]; then
+    if [ ! -f "$PROCESS" ]; then error "Process profile not found: $PROCESS"; exit 1; fi
+    PROCESS=$(cd "$(dirname "$PROCESS")" && pwd)/$(basename "$PROCESS")
+    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+    LUMIA_LOOK="$SCRIPT_DIR/Lumia Photo Transfer/.build/release/lumia-look"
+    if [ ! -x "$LUMIA_LOOK" ]; then
+        warn "--process given but lumia-look is not built; run:"
+        warn "  cd "$SCRIPT_DIR/Lumia Photo Transfer" && swift build -c release"
+        warn "Processing will be skipped for this run."
+        LUMIA_LOOK=""
+    else
+        info "Look processing: $(basename "$PROCESS")  (-> $DEST/Processed/)"
+    fi
 fi
 
 # libmtp merges stdout+stderr; these signatures mean another process holds the
@@ -172,7 +197,7 @@ info "Destination: $DEST"
 
 # --- Step 4: Download (counters live in the main shell, not a subshell) ------
 header "Downloading DNG files"
-DOWNLOADED=0; SKIPPED=0; FAILED=0
+DOWNLOADED=0; SKIPPED=0; FAILED=0; PROCESSED=0
 
 for i in "${!DNG_IDS[@]}"; do
     fid="${DNG_IDS[$i]}"; name="${DNG_NAMES[$i]}"
@@ -204,6 +229,17 @@ for i in "${!DNG_IDS[@]}"; do
             base="${name%.*}"
             cp "$PROFILE" "$DEST/${base}.xmp"
         fi
+        # Standalone grade (no Lightroom) if --process was given and binary exists
+        if [ -n "$LUMIA_LOOK" ]; then
+            base="${name%.*}"
+            mkdir -p "$DEST/Processed"
+            if "$LUMIA_LOOK" --profile "$PROCESS" --input "$DEST/$name"                    --output "$DEST/Processed/${base}.jpg" >/dev/null 2>&1; then
+                info "  ↳ graded with look"
+                PROCESSED=$((PROCESSED+1))
+            else
+                warn "  ↳ look processing failed for $name"
+            fi
+        fi
     else
         error "  ✗ Failed: $name"
         FAILED=$((FAILED+1))
@@ -215,6 +251,7 @@ header "Transfer Complete"
 info "Downloaded: $DOWNLOADED"
 info "Skipped:    $SKIPPED (already transferred)"
 [ "$FAILED" -gt 0 ] && warn "Failed:     $FAILED"
+[ "$PROCESSED" -gt 0 ] && info "Graded:     $PROCESSED (-> $DEST/Processed/)"
 info "Saved to:   $DEST"
 
 # --- Step 6: Optional Lightroom import ---------------------------------------

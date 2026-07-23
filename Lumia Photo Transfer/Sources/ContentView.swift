@@ -101,6 +101,17 @@ struct ContentView: View {
                     }
                 }
                 .frame(width: 180)
+
+                // How the selected Look is applied on import (standalone pipeline
+                // lives in LookKit; "Process" needs no Adobe software at all).
+                Picker("Apply", selection: $mtp.applyMode) {
+                    ForEach(ApplyMode.allCases) { mode in
+                        Text(mode.rawValue).tag(mode)
+                    }
+                }
+                .frame(width: 130)
+                .disabled(mtp.selectedProfile == nil)
+                .help("Off = originals only.  Sidecar = write .xmp for Lightroom.  Process = render the look to JPEG, no Lightroom.")
             }
 
             Divider().frame(height: 20)
@@ -309,6 +320,12 @@ struct ContentView: View {
                 .font(.title2)
                 .fontWeight(.medium)
 
+            if mtp.processedCount > 0 {
+                Text("\(mtp.processedCount) graded with the selected look → Processed/")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
             if let dest = destinationURL {
                 Text("Saved to: \(dest.path)")
                     .font(.caption)
@@ -439,7 +456,7 @@ struct ContentView: View {
         let selectedPhotos = filteredPhotos.filter { selectedIDs.contains($0.id) }
 
         Task {
-            let count = await mtp.downloadFiles(selectedPhotos, to: dest) { progress, file in
+            let count = await mtp.downloadFiles(selectedPhotos, to: dest, forceSidecar: true) { progress, file in
                 mtp.state = .transferring(progress: progress, currentFile: file)
             }
 
