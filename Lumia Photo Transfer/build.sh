@@ -12,6 +12,11 @@ mkdir -p "$APP_DIR/Contents/Resources"
 
 cp .build/release/LumiaPhotoTransfer "$APP_DIR/Contents/MacOS/LumiaPhotoTransfer"
 
+# Copy app icon (pre-built .icns from Assets/)
+if [ -f Assets/AppIcon.icns ]; then
+    cp Assets/AppIcon.icns "$APP_DIR/Contents/Resources/AppIcon.icns"
+fi
+
 # This project lives under ~/Documents, which on macOS is often iCloud-synced
 # ("Desktop & Documents"). iCloud stamps every file with xattrs like
 # com.apple.fileprovider.fpfs#P and com.apple.FinderInfo, and codesign

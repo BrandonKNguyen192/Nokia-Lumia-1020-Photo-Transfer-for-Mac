@@ -1,0 +1,98 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <!-- Background gradient: warm amber -->
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#FFD54F"/>
+      <stop offset="100%" stop-color="#FF8F00"/>
+    </linearGradient>
+    <!-- Phone body gradient: yellow -->
+    <linearGradient id="phoneBody" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FFE082"/>
+      <stop offset="50%" stop-color="#FFD600"/>
+      <stop offset="100%" stop-color="#FFC107"/>
+    </linearGradient>
+    <!-- Camera lens gradient -->
+    <radialGradient id="lens" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0%" stop-color="#37474F"/>
+      <stop offset="60%" stop-color="#263238"/>
+      <stop offset="80%" stop-color="#1a1a2e"/>
+      <stop offset="100%" stop-color="#000"/>
+    </radialGradient>
+    <!-- Lens reflection -->
+    <radialGradient id="lensReflect" cx="0.35" cy="0.35" r="0.5">
+      <stop offset="0%" stop-color="rgba(255,255,255,0.4)"/>
+      <stop offset="100%" stop-color="rgba(255,255,255,0)"/>
+    </radialGradient>
+    <!-- Shadow -->
+    <filter id="shadow" x="-10%" y="-10%" width="130%" height="130%">
+      <feDropShadow dx="0" dy="8" stdDeviation="16" flood-color="#00000044"/>
+    </filter>
+    <filter id="innerShadow" x="-5%" y="-5%" width="110%" height="110%">
+      <feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#00000033"/>
+    </filter>
+  </defs>
+
+  <!-- macOS squircle background -->
+  <rect x="0" y="0" width="1024" height="1024" rx="228" ry="228" fill="url(#bg)"/>
+
+  <!-- Subtle pattern overlay -->
+  <rect x="0" y="0" width="1024" height="1024" rx="228" ry="228" fill="url(#bg)" opacity="0.9"/>
+
+  <!-- Phone body (back view, slightly tilted for cuteness) -->
+  <g transform="translate(512,500) rotate(-8) translate(-512,-500)" filter="url(#shadow)">
+    <!-- Phone body -->
+    <rect x="332" y="180" width="360" height="640" rx="36" ry="36" fill="url(#phoneBody)" stroke="#E6A800" stroke-width="3"/>
+
+    <!-- Subtle edge highlight -->
+    <rect x="335" y="183" width="354" height="634" rx="34" ry="34" fill="none" stroke="rgba(255,255,255,0.3)" stroke-width="2"/>
+
+    <!-- Camera circle (the iconic 41MP PureView) -->
+    <circle cx="512" cy="360" r="72" fill="#1a1a1a" stroke="#333" stroke-width="4"/>
+    <circle cx="512" cy="360" r="60" fill="url(#lens)"/>
+    <circle cx="512" cy="360" r="60" fill="url(#lensReflect)"/>
+    <!-- Inner lens ring -->
+    <circle cx="512" cy="360" r="38" fill="none" stroke="#444" stroke-width="2"/>
+    <circle cx="512" cy="360" r="20" fill="#0d1117"/>
+    <!-- Lens highlight dot -->
+    <circle cx="498" cy="346" r="8" fill="rgba(255,255,255,0.5)"/>
+    <circle cx="520" cy="370" r="4" fill="rgba(255,255,255,0.25)"/>
+
+    <!-- Camera ring (silver/metallic) -->
+    <circle cx="512" cy="360" r="72" fill="none" stroke="#B0BEC5" stroke-width="6"/>
+    <circle cx="512" cy="360" r="76" fill="none" stroke="#90A4AE" stroke-width="2"/>
+
+    <!-- LED flash (small circle next to camera) -->
+    <circle cx="610" cy="320" r="12" fill="#FFF9C4" stroke="#F9A825" stroke-width="2"/>
+    <circle cx="610" cy="320" r="6" fill="#FFEE58"/>
+
+    <!-- Xenon flash (rectangle) -->
+    <rect x="596" y="348" width="28" height="14" rx="4" fill="#E0E0E0" stroke="#BDBDBD" stroke-width="1.5"/>
+
+    <!-- Nokia logo area (subtle text) -->
+    <text x="512" y="560" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="28" font-weight="300" fill="#B8860B" letter-spacing="6" opacity="0.6">NOKIA</text>
+
+    <!-- Camera bump shadow (subtle) -->
+    <ellipse cx="512" cy="365" rx="80" ry="80" fill="none" stroke="rgba(0,0,0,0.08)" stroke-width="8"/>
+
+    <!-- Volume buttons on side -->
+    <rect x="326" y="380" width="6" height="40" rx="3" fill="#E6A800"/>
+    <rect x="326" y="430" width="6" height="40" rx="3" fill="#E6A800"/>
+
+    <!-- Power button -->
+    <rect x="326" y="500" width="6" height="30" rx="3" fill="#E6A800"/>
+  </g>
+
+  <!-- Cute sparkle/star decorations -->
+  <g opacity="0.7">
+    <!-- Star 1 -->
+    <polygon points="200,250 206,268 224,268 210,278 214,296 200,286 186,296 190,278 176,268 194,268" fill="white" opacity="0.8"/>
+    <!-- Star 2 -->
+    <polygon points="780,700 784,712 796,712 787,719 790,731 780,724 770,731 773,719 764,712 776,712" fill="white" opacity="0.6"/>
+    <!-- Star 3 (small) -->
+    <polygon points="160,650 163,658 171,658 165,663 167,671 160,666 153,671 155,663 149,658 157,658" fill="white" opacity="0.5"/>
+    <!-- Dot 1 -->
+    <circle cx="820" cy="280" r="6" fill="white" opacity="0.5"/>
+    <!-- Dot 2 -->
+    <circle cx="240" cy="780" r="4" fill="white" opacity="0.4"/>
+  </g>
+</svg>
