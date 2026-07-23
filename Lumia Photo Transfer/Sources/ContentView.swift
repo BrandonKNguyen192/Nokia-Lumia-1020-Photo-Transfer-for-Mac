@@ -167,14 +167,32 @@ struct ContentView: View {
                     Image(systemName: "photo.on.rectangle.angled")
                         .font(.system(size: 48))
                         .foregroundColor(.gray.opacity(0.4))
-                    Text(showOnlyDNG ? "No DNG files found on the phone" : "No photos found")
-                        .font(.title3)
-                        .foregroundColor(.secondary)
-                    if showOnlyDNG {
+
+                    if showOnlyDNG && !mtp.photos.isEmpty {
+                        // DNG filter is hiding JPEGs that DO exist on the phone.
+                        let jpegCount = mtp.photos.filter { !$0.isDNG }.count
+                        Text("No DNG files — but \(jpegCount) JPEG\(jpegCount == 1 ? "" : "s") found")
+                            .font(.title3)
+                            .foregroundColor(.secondary)
+                        Text("Turn off \"DNG only\" above to see them, or shoot in\nRAW + JPEG mode for future photos:\nNokia Camera → Settings → Capture mode → RAW + JPEG")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                        Button("Show JPEGs") { showOnlyDNG = false }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
+                    } else if showOnlyDNG {
+                        Text("No DNG files found on the phone")
+                            .font(.title3)
+                            .foregroundColor(.secondary)
                         Text("Make sure you're shooting in RAW mode in Nokia Camera:\nSettings → Capture mode → RAW + JPEG")
                             .font(.caption)
                             .foregroundColor(.secondary)
                             .multilineTextAlignment(.center)
+                    } else {
+                        Text("No photos found")
+                            .font(.title3)
+                            .foregroundColor(.secondary)
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
