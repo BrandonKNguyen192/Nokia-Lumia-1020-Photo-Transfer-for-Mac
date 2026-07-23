@@ -7,7 +7,6 @@ import UniformTypeIdentifiers
 struct ContentView: View {
     @StateObject private var mtp = MTPManager()
     @State private var selectedIDs: Set<String> = []
-    @State private var thumbnails: [String: URL] = [:]
     @State private var destinationURL: URL?
     @State private var showFilePicker = false
     @State private var sortOrder: SortOption = .nameDesc
@@ -203,10 +202,10 @@ struct ContentView: View {
                         PhotoCellView(
                             photo: photo,
                             isSelected: selectedIDs.contains(photo.id),
-                            thumbnailURL: thumbnails[photo.id]
-                        ) {
-                            toggleSelection(photo.id)
-                        }
+                            thumbnailURL: mtp.thumbnailURLs[photo.id],
+                            onToggle: { toggleSelection(photo.id) },
+                            onRequest: { await mtp.requestThumbnail(for: photo) }
+                        )
                         .contextMenu {
                             Button("Select") { selectedIDs.insert(photo.id) }
                             Button("Deselect") { selectedIDs.remove(photo.id) }
@@ -379,15 +378,15 @@ struct ContentView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    /// Re-run detect → scan → thumbnails, guarding scan on a successful
-    /// detect. Single source of truth for the toolbar Refresh button,
-    /// the idle/error CTAs, the ⌘R / Device menu (via .refreshDevice),
-    /// and the one-shot launch detect in `.task`.
+    /// Re-run detect → scan, guarding scan on a successful detect. Single source
+    /// of truth for the toolbar Refresh button, the idle/error CTAs, the ⌘R /
+    /// Device menu (via .refreshDevice), and the one-shot launch detect in `.task`.
+    /// Thumbnails are NOT loaded here — the grid fetches them lazily per cell, so
+    /// the UI reaches .ready (interactive) as soon as the file list is parsed.
     private func refresh() async {
         await mtp.detectDevice()
         if mtp.deviceInfo?.isConnected == true {
             await mtp.scanFiles()
-            await loadAllThumbnails()
         }
     }
 
@@ -450,15 +449,4 @@ struct ContentView: View {
         }
     }
 
-    private func loadAllThumbnails() async {
-        mtp.state = .downloadingThumbnails
-
-        for photo in filteredPhotos {
-            if let thumbURL = await mtp.downloadThumbnail(for: photo) {
-                thumbnails[photo.id] = thumbURL
-            }
-        }
-
-        mtp.state = .ready
-    }
 }

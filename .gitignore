@@ -17,3 +17,7 @@ Lumia Photo Transfer/Lumia Photo Transfer.app/
 .vscode/
 .idea/
 *.swp
+
+# Runtime / secret artifacts that another tool may drop in the working tree
+# (e.g. a jwt_secret). NOT part of this project — never commit.
+/data/

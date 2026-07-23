@@ -159,7 +159,62 @@ class MTPManager: ObservableObject {
 
     // MARK: - Thumbnail Generation
 
-    func downloadThumbnail(for photo: PhotoItem) async -> URL? {
+    /// Thumbnails the grid has built, keyed by photo id. Observed by the cells so
+    /// launch never blocks on a whole-device thumbnail pass — previews are fetched
+    /// lazily as cells scroll into view (requestThumbnail).
+    @Published var thumbnailURLs: [String: URL] = [:]
+
+    // Serializes thumbnail production so the grid’s concurrent on-appear requests
+    // don’t spawn competing mtp-getfile processes (which would self-contend on the
+    // single MTP interface, and on ptpcamerad).
+    private var thumbGate: Task<Void, Never> = Task {}
+    private var thumbWaiters: [String: [CheckedContinuation<URL?, Never>]] = [:]
+    private var thumbQueued: Set<String> = []
+    private var thumbResolved: [String: URL?] = [:]
+
+    /// Called by a grid cell when it appears. Idempotent: a no-op if the thumbnail
+    /// is already built/cached; otherwise enqueues one serial build and publishes
+    /// the result. Returns true iff a URL is now available.
+    @discardableResult
+    func requestThumbnail(for photo: PhotoItem) async -> Bool {
+        if thumbnailURLs[photo.id] != nil { return true }
+        if let url = await buildThumbnailSerially(for: photo) {
+            thumbnailURLs[photo.id] = url
+            return true
+        }
+        return false
+    }
+
+    /// Cache-first, de-duplicated, serial thumbnail producer.
+    private func buildThumbnailSerially(for photo: PhotoItem) async -> URL? {
+        if let cached = existingCachedThumbnail(for: photo) { return cached }   // disk (survives relaunch)
+        if let done = thumbResolved[photo.id] { return done }                   // this session (nil = prior failure)
+        return await withCheckedContinuation { cont in
+            thumbWaiters[photo.id, default: []].append(cont)
+            guard thumbQueued.insert(photo.id).inserted else { return }
+            let prev = thumbGate
+            thumbGate = Task { [weak self] in
+                _ = await prev.value
+                guard let self else { return }
+                let url = await self.produceThumbnail(for: photo)
+                let waiters = self.thumbWaiters[photo.id] ?? []
+                self.thumbWaiters[photo.id] = nil
+                self.thumbResolved[photo.id] = url
+                for w in waiters { w.resume(returning: url) }
+            }
+        }
+    }
+
+    private func existingCachedThumbnail(for photo: PhotoItem) -> URL? {
+        let p = tempDir.appendingPathComponent("thumbs", isDirectory: true)
+            .appendingPathComponent("thumb_\(photo.isDNG ? (photo.jpegFileID ?? photo.id) : photo.id).jpg")
+        return FileManager.default.fileExists(atPath: p.path) ? p : nil
+    }
+
+    /// One thumbnail’s real work: free the camera daemon, fetch the paired JPEG
+    /// (or the file itself), downscale to 400px. Two attempts ride out a ptpcamerad
+    /// respawn. Always runs serially via buildThumbnailSerially.
+    private func produceThumbnail(for photo: PhotoItem) async -> URL? {
         let targetID: String
         let targetName: String
         if photo.isDNG, let jpegID = photo.jpegFileID, let jpegName = photo.jpegFilename {
@@ -174,14 +229,18 @@ class MTPManager: ObservableObject {
         if FileManager.default.fileExists(atPath: thumbPath.path) { return thumbPath }
 
         let destPath = thumbDir.appendingPathComponent(targetName)
-        await reclaimPtpcamerad()
-        _ = await runCommand("mtp-getfile", arguments: [targetID, destPath.path])
-
-        if FileManager.default.fileExists(atPath: destPath.path) {
-            _ = await runCommand("sips", arguments: ["-Z", "400", destPath.path, "--out", thumbPath.path])
-            try? FileManager.default.removeItem(at: destPath)
-            if FileManager.default.fileExists(atPath: thumbPath.path) { return thumbPath }
-            return destPath
+        for _ in 0..<2 {
+            await reclaimPtpcamerad()
+            _ = await runCommand("mtp-getfile", arguments: [targetID, destPath.path])
+            if Self.nonEmptyFile(at: destPath) {
+                _ = await runCommand("sips", arguments: ["-Z", "400", destPath.path, "--out", thumbPath.path])
+                try? FileManager.default.removeItem(at: destPath)
+                // sips writes thumbPath only on success. If it failed we've already
+                // removed the full-res source, so there is nothing valid to return —
+                // returning destPath here would hand back a just-deleted path.
+                return FileManager.default.fileExists(atPath: thumbPath.path) ? thumbPath : nil
+            }
+            await Self.pause(0.6)
         }
         return nil
     }
@@ -199,7 +258,14 @@ class MTPManager: ObservableObject {
             if Self.nonEmptyFile(at: destPath) { return true }
             await Self.pause(0.8)
         }
-        return Self.nonEmptyFile(at: destPath)
+        // Every attempt failed. Remove any 0-byte/partial leftover so it can't
+        // masquerade as a real photo in the user's folder (and, for the shell
+        // tool's "[ -f ]" check, get silently skipped on every later run).
+        if !Self.nonEmptyFile(at: destPath) {
+            try? FileManager.default.removeItem(at: destPath)
+            return false
+        }
+        return true
     }
 
     func downloadFiles(_ photos: [PhotoItem], to destination: URL,
@@ -384,8 +450,14 @@ class MTPManager: ObservableObject {
                 process.environment = Self.environmentWithHomebrewPath()
                 do {
                     try process.run()
-                    process.waitUntilExit()
+                    // Drain the pipe BEFORE waiting for exit. stdout+stderr share
+                    // one pipe with a ~64 KB kernel buffer; mtp-filetree on a full
+                    // phone easily exceeds that. If we waitUntilExit() first, the
+                    // child blocks writing into a full pipe while we block waiting
+                    // for it to exit → deadlock. Reading to EOF unblocks the child;
+                    // EOF arrives when it closes the pipe (on exit).
                     let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                    process.waitUntilExit()
                     continuation.resume(returning: String(data: data, encoding: .utf8) ?? "")
                 } catch {
                     continuation.resume(returning: "Error running \(command): \(error.localizedDescription)")
