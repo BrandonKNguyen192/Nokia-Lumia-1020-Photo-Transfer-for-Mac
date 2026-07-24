@@ -365,11 +365,6 @@ open -a "Lumia Photo Transfer"
 - **Select/deselect** individual photos or use Select All
 - **Import** selected DNGs to a folder on your Mac
 - **Import to Lightroom** — downloads and opens directly in Lightroom Classic
-- **Colour Looks, no Lightroom needed** — pick a `.xmp` Look (e.g. a Cobalt film
-  simulation) and an **Apply** mode: *Off*, *Sidecar (LR)*, or *Process JPEG*.
-  *Process* renders the Look onto your photos with CoreImage and writes graded
-  JPEGs to a `Processed/` folder — works on **both JPEG and DNG**, entirely on
-  your Mac, with zero Adobe software.
 - **Sort** by name or size, filter to DNG-only
 - **Progress tracking** during transfers
 - **Right-click** any photo to download it to Desktop
@@ -402,106 +397,17 @@ Lumia Photo Transfer/
 │   ├── PhotoCellView.swift           — Individual photo cell with thumbnail
 │   ├── MTPManager.swift              — libmtp CLI wrapper (detect, scan, download)
 │   ├── Models.swift                  — Data models
-│   ├── LookKit/                      — Adobe "Look" LUT decoder + CoreImage renderer
-│   │   ├── AdobeLookLUT.swift        —   base-85 + zlib decode of crs:RGBTable → 3-D LUT
-│   │   └── LookProcessor.swift       —   apply the LUT to JPEG/DNG, write graded output
-│   └── lumia-look/                   — standalone CLI that grades photos (see §9)
-│       └── main.swift
 ├── Package.swift
 ├── build.sh                          — Build + install script
-├── ../Profiles/                      — YOUR Look profiles (gitignored, not shipped)
 └── Lumia Photo Transfer.app          — Compiled app bundle
 ```
 
-## 9. Colour Looks — grade your photos without Lightroom
-
-The toolkit can apply Adobe Camera Raw **"Look"** profiles (the `crs:RGBTable`
-3-D LUTs that packs like *Cobalt-Image* ship as `.xmp` files) **directly on your
-Mac**, with no Adobe software and no Lightroom. The whole pipeline lives in
-`LookKit/` and is shared by the GUI app and the `lumia-look` command-line tool.
-
-### How it works (the short version)
-
-A Look `.xmp` stores its colour grade as a compressed, custom-base-85-encoded
-3-D LUT. `LookKit` decodes that blob (base-85 → zlib inflate → 32×32×32 LUT),
-then applies it on the GPU with CoreImage's `CIColorCubeWithColorSpace`. Inputs
-are first normalised into **sRGB** (the space these display-referred Looks are
-authored in), so the same code grades a phone JPEG and a freshly-developed DNG
-identically. Originals are never modified — graded files are written separately.
-
-### In the GUI app
-
-1. Drop one or more Look `.xmp` files into
-   `~/Library/Application Support/Lumia Photo Transfer/Profiles/`
-   (the app also reads any `Profiles/` folder bundled next to its binary).
-2. Select photos, choose the Look in the **Profile** picker.
-3. Choose an **Apply** mode:
-   - **Off** — download originals only.
-   - **Sidecar (LR)** — also write a `.xmp` next to each file so *Lightroom*
-     reads the Look on import (the Lightroom-dependent path).
-   - **Process JPEG** — render the Look ourselves and write graded JPEGs to a
-     `Processed/` sub-folder. **This needs no Lightroom at all.**
-4. Import. The completed screen reports how many files were graded.
-
-> The **Lightroom** toolbar button always writes a sidecar (that's its whole
-> purpose), regardless of the Apply mode.
-
-### From the terminal: `lumia-look`
-
-`lumia-look` is a standalone binary that grades any JPEG or DNG with a Look —
-handy for folders you already have on disk, or to wire into your own scripts.
-
-```bash
-cd "Lumia Photo Transfer"
-swift build -c release           # builds .build/release/lumia-look
-
-# Grade a single file
-.build/release/lumia-look \
-    --profile "../Profiles/Cobalt Ricoh GR Standard v3.0.xmp" \
-    --input  photo.dng --output graded.jpg
-
-# Grade a whole folder (writes to <dir>/Processed by default)
-.build/release/lumia-look \
-    --profile LOOK.xmp --input-dir RAW/ --format jpg --quality 0.95
-
-# Verify the GPU LUT matches the reference decoder (axis order / colour space)
-.build/release/lumia-look --selftest --profile LOOK.xmp
-```
-
-Options: `--profile` (required), `--input`/`--output`, `--input-dir`/`--output-dir`,
-`--format jpg|tiff|png`, `--quality 0..1`, `--selftest`.
-
-### Adding your own Looks
-
-Any ACR "Look" `.xmp` that carries a `crs:RGBTable` works — just copy it into the
-Profiles folder above and it appears in the picker (and in `lumia-look`). The
-decoder is format-agnostic; a whole pack of 24 Cobalt Ricoh GR / GRIII Looks was
-validated end-to-end.
-
-> **Licensing:** the Look `.xmp` files themselves are third-party creative work
-> (e.g. © Cobalt-Image). This repo does **not** ship any Look files;
-> you install them locally from packs you've purchased/downloaded. Don't
-> redistribute Look packs you don't have the rights to share.
-
-### A note on DNGs and colour spaces
-
-A DNG's decoded image is typically tagged **Display P3** (or another wide/linear
-space), *not* sRGB. Feeding that straight to a Look keyed in sRGB samples the LUT
-at the wrong coordinates and produces a badly wrong colour cast (e.g. electric
-blue shadows). `LookKit` avoids this by normalising the input to sRGB *before*
-the cube — which is also why grading a DNG costs no extra RAW decode than
-encoding it would anyway.
-
-## 10. Open-source / security notes
+## 9. Open-source / security notes
 
 This project is intended to be safe to publish:
 
 - **No secrets, keys, tokens, or personal paths** are in the source or history.
-- No third-party Look profiles are bundled; the `Profiles/` directory is gitignored.
 - The app is ad-hoc signed by `build.sh`; there is no hardcoded signing identity.
 - Transfer history (`~/.lumia-transfer-history`) and downloaded photos stay on
   your machine and are never committed (see `.gitignore`).
 
-If you add your own Look packs locally, keep them in
-`~/Library/Application Support/Lumia Photo Transfer/Profiles/` (outside the repo)
-so they aren't accidentally committed.

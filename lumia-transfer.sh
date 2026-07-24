@@ -8,10 +8,6 @@
 #   ./lumia-transfer.sh --all            # Re-download ALL DNGs (ignore history)
 #   ./lumia-transfer.sh --list           # Just list DNG files on the phone
 #   ./lumia-transfer.sh --import         # Download + import into Lightroom
-#   ./lumia-transfer.sh --profile P.xmp  # Also write XMP sidecar (color profile)
-#   ./lumia-transfer.sh --process P.xmp  # Grade each DNG with the Look -> Processed/
-#                                        #   (standalone, no Lightroom; needs a built
-#                                        #    lumia-look binary, see README §9)
 #
 # NOTE on the macOS "camera daemon" (ptpcamerad):
 #   macOS's ptpcamerad grabs the Lumia's USB interface exclusively, which makes
@@ -34,19 +30,14 @@ RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 BLUE='\033[0;34m'; CYAN='\033[0;36m'; NC='\033[0m'
 
 # --- Parse arguments ---------------------------------------------------------
-DEST="$DEFAULT_DEST"; ALL=false; LIST_ONLY=false; IMPORT=false; PROFILE=""; PROCESS=""
-NEXT_IS_PROFILE=false; NEXT_IS_PROCESS=false
+DEST="$DEFAULT_DEST"; ALL=false; LIST_ONLY=false; IMPORT=false
 for arg in "$@"; do
-    if [ "$NEXT_IS_PROFILE" = true ]; then PROFILE="$arg"; NEXT_IS_PROFILE=false; continue; fi
-    if [ "$NEXT_IS_PROCESS" = true ]; then PROCESS="$arg"; NEXT_IS_PROCESS=false; continue; fi
     case "$arg" in
         --all)     ALL=true ;;
         --list)    LIST_ONLY=true ;;
         --import)  IMPORT=true ;;
-        --profile) NEXT_IS_PROFILE=true ;;
-        --process) NEXT_IS_PROCESS=true ;;
         --help|-h)
-            sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
+            sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
             exit 0 ;;
         *)         DEST="$arg" ;;
     esac
@@ -60,36 +51,6 @@ warn()    { echo -e "${YELLOW}[WARN]${NC} $*"; }
 error()   { echo -e "${RED}[ERR ]${NC} $*" >&2; }
 header()  { echo -e "\n${CYAN}━━━ $* ━━━${NC}"; }
 
-# Validate profile path if provided
-if [ -n "$PROFILE" ]; then
-    if [ ! -f "$PROFILE" ]; then
-        error "Profile not found: $PROFILE"
-        exit 1
-    fi
-    PROFILE=$(cd "$(dirname "$PROFILE")" && pwd)/$(basename "$PROFILE")
-    info "Color profile (sidecar): $(basename "$PROFILE")"
-fi
-
-# --- Standalone Look processing (no Lightroom) -------------------------------
-# --process grades each downloaded DNG with the Look via the lumia-look binary
-# built from this repo. If it isn't built yet, we warn once and skip gracefully
-# (transfer still works; only the grade is omitted).
-LUMIA_LOOK=""
-if [ -n "$PROCESS" ]; then
-    if [ ! -f "$PROCESS" ]; then error "Process profile not found: $PROCESS"; exit 1; fi
-    PROCESS=$(cd "$(dirname "$PROCESS")" && pwd)/$(basename "$PROCESS")
-    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-    LUMIA_LOOK="$SCRIPT_DIR/Lumia Photo Transfer/.build/release/lumia-look"
-    if [ ! -x "$LUMIA_LOOK" ]; then
-        warn "--process given but lumia-look is not built; run:"
-        warn "  cd "$SCRIPT_DIR/Lumia Photo Transfer" && swift build -c release"
-        warn "Processing will be skipped for this run."
-        LUMIA_LOOK=""
-    else
-        info "Look processing: $(basename "$PROCESS")  (-> $DEST/Processed/)"
-    fi
-fi
-
 # libmtp merges stdout+stderr; these signatures mean another process holds the
 # MTP interface. IMPORTANT: only ever call these in a condition position
 # (if/||/&&) so `set -e` doesn't trip on grep's nonzero exit.
@@ -98,46 +59,51 @@ is_nodevice() { grep -qiE 'no raw devices|no devices' <<<"$1"; }
 
 # --- ptpcamerad suppressor ---------------------------------------------------
 # While this PID is set, a background loop reaps ptpcamerad ~2.5x/sec so it can
-# never hold the USB interface long enough to block a single mtp-* call.
-SUPPRESS_PID=""
-ptpcam_suppress_start() {
-    [ -n "$SUPPRESS_PID" ] && return 0
-    ( while :; do pkill -9 -x ptpcamerad 2>/dev/null || true; sleep 0.4; done ) &
-    SUPPRESS_PID=$!
+# never hold the USB interface. Killed on exit (trap).
+REAPER_PID=""
+start_reaper() {
+    (while true; do pkill -9 -x ptpcamerad 2>/dev/null || true; sleep 0.4; done) &
+    REAPER_PID=$!
 }
-ptpcam_suppress_stop() {
-    [ -n "$SUPPRESS_PID" ] || return 0
-    kill "$SUPPRESS_PID" 2>/dev/null || true
-    SUPPRESS_PID=""
+stop_reaper() {
+    [ -n "$REAPER_PID" ] && kill "$REAPER_PID" 2>/dev/null || true
+    wait "$REAPER_PID" 2>/dev/null || true
+    REAPER_PID=""
 }
-cleanup() { ptpcam_suppress_stop; }
-trap cleanup EXIT
+trap stop_reaper EXIT
 
-# --- Step 1: Detect the phone ------------------------------------------------
+# --- Step 0: Check dependencies ----------------------------------------------
+for cmd in mtp-detect mtp-filetree mtp-getfile; do
+    if ! command -v "$cmd" &>/dev/null; then
+        error "$cmd not found. Install libmtp:"
+        echo "  brew install libmtp"
+        exit 1
+    fi
+done
+
+# --- Step 1: Detect device ---------------------------------------------------
 header "Detecting Nokia Lumia 1020"
-ptpcam_suppress_start
-info "Holding the macOS camera daemon (ptpcamerad) so libmtp can read the phone."
+
+start_reaper
 
 DETECT_OUTPUT=""
 for attempt in 1 2 3 4; do
     DETECT_OUTPUT=$(mtp-detect 2>&1) || true
     is_busy "$DETECT_OUTPUT" || break
-    warn "USB interface still busy (attempt $attempt/4) — waiting for it to free…"
     sleep 1
 done
 
 if is_busy "$DETECT_OUTPUT"; then
-    error "The USB interface is locked by something other than ptpcamerad."
-    echo "  This script already suppresses ptpcamerad, so the remaining holder is"
-    echo "  usually Google Chrome or the ChatGPT/Codex desktop app (both probe USB)."
-    echo "  Quit those, keep the phone unlocked in MTP mode, and re-run."
+    error "Another process is holding the phone's USB interface."
+    echo "  Quit Chrome / ChatGPT / Photos / Image Capture, unplug, replug,"
+    echo "  set MTP mode, and re-run."
     exit 1
 fi
 if is_nodevice "$DETECT_OUTPUT"; then
     error "No MTP device found."
     echo "  1. Connect the Lumia 1020 with a USB *data* cable (not charge-only)."
     echo "  2. Unlock the phone and keep the screen awake."
-    echo "  3. Notification shade → USB → “Media device (MTP)”."
+    echo "  3. Notification shade → USB → \u201CMedia device (MTP)\u201D."
     echo "  4. Wait ~3s and re-run. (Try another port/cable if still nothing.)"
     exit 1
 fi
@@ -197,7 +163,7 @@ info "Destination: $DEST"
 
 # --- Step 4: Download (counters live in the main shell, not a subshell) ------
 header "Downloading DNG files"
-DOWNLOADED=0; SKIPPED=0; FAILED=0; PROCESSED=0
+DOWNLOADED=0; SKIPPED=0; FAILED=0
 
 for i in "${!DNG_IDS[@]}"; do
     fid="${DNG_IDS[$i]}"; name="${DNG_NAMES[$i]}"
@@ -224,22 +190,6 @@ for i in "${!DNG_IDS[@]}"; do
         success "  ✓ $name"
         echo "$fid:$name" >> "$HISTORY_FILE"
         DOWNLOADED=$((DOWNLOADED+1))
-        # Write color profile sidecar if --profile was given
-        if [ -n "$PROFILE" ]; then
-            base="${name%.*}"
-            cp "$PROFILE" "$DEST/${base}.xmp"
-        fi
-        # Standalone grade (no Lightroom) if --process was given and binary exists
-        if [ -n "$LUMIA_LOOK" ]; then
-            base="${name%.*}"
-            mkdir -p "$DEST/Processed"
-            if "$LUMIA_LOOK" --profile "$PROCESS" --input "$DEST/$name"                    --output "$DEST/Processed/${base}.jpg" >/dev/null 2>&1; then
-                info "  ↳ graded with look"
-                PROCESSED=$((PROCESSED+1))
-            else
-                warn "  ↳ look processing failed for $name"
-            fi
-        fi
     else
         error "  ✗ Failed: $name"
         FAILED=$((FAILED+1))
@@ -251,7 +201,6 @@ header "Transfer Complete"
 info "Downloaded: $DOWNLOADED"
 info "Skipped:    $SKIPPED (already transferred)"
 [ "$FAILED" -gt 0 ] && warn "Failed:     $FAILED"
-[ "$PROCESSED" -gt 0 ] && info "Graded:     $PROCESSED (-> $DEST/Processed/)"
 info "Saved to:   $DEST"
 
 # --- Step 6: Optional Lightroom import ---------------------------------------

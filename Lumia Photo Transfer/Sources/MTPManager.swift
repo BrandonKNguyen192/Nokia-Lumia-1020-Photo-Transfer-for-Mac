@@ -1,5 +1,4 @@
 import Foundation
-import LookKit
 
 // Directories that hold the Homebrew-installed mtp-* binaries.
 // A double-clicked .app only inherits /usr/bin:/bin:/usr/sbin:/sbin,
@@ -29,64 +28,12 @@ class MTPManager: ObservableObject {
     /// Surfaced in the UI so connection problems are diagnosable.
     @Published var rawDiagnostic: String = ""
 
-    // MARK: - Color Profile Pipeline
-
-    /// Available .xmp profile files found in the Profiles/ folder.
-    @Published var availableProfiles: [URL] = []
-    /// The profile the user has selected for sidecar writing on import (nil = none).
-    @Published var selectedProfile: URL? = nil
-    /// How the selected Look is applied on import (off / sidecar / standalone process).
-    @Published var applyMode: ApplyMode = .sidecar
-    /// How many files were graded by the standalone pipeline on the last import.
-    @Published var processedCount: Int = 0
-
     private let tempDir: URL
 
     init() {
         tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("LumiaPhotoTransfer", isDirectory: true)
         try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-        scanProfiles()
-    }
-
-    // MARK: - Profile Scanning
-
-    func scanProfiles() {
-        var found: [URL] = []
-        let dirs = [Self.findProfilesDir(),
-                    FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
-                        .first?.appendingPathComponent("Lumia Photo Transfer/Profiles", isDirectory: true)
-        ].compactMap { $0 }
-        for dir in dirs {
-            if let contents = try? FileManager.default.contentsOfDirectory(
-                at: dir, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) {
-                found.append(contentsOf: contents.filter { $0.pathExtension.lowercased() == "xmp" })
-            }
-        }
-        // A profile can live in both the bundled Profiles/ and the user's
-        // Application Support copy; show it once (bundle wins, it's first).
-        var seen = Set<String>()
-        let unique = found.filter { seen.insert($0.lastPathComponent).inserted }
-        availableProfiles = unique.sorted { $0.lastPathComponent < $1.lastPathComponent }
-    }
-
-    private static func findProfilesDir() -> URL? {
-        let fm = FileManager.default
-        var dir = URL(fileURLWithPath: ProcessInfo.processInfo.arguments[0]).deletingLastPathComponent()
-        for _ in 0..<6 {
-            let c = dir.appendingPathComponent("Profiles", isDirectory: true)
-            if fm.fileExists(atPath: c.path) { return c }
-            dir = dir.deletingLastPathComponent()
-        }
-        let cwd = URL(fileURLWithPath: fm.currentDirectoryPath).appendingPathComponent("Profiles", isDirectory: true)
-        return fm.fileExists(atPath: cwd.path) ? cwd : nil
-    }
-
-    private func writeProfileSidecar(for filename: String, in destination: URL) {
-        guard let profile = selectedProfile else { return }
-        let base = (filename as NSString).deletingPathExtension
-        let sidecar = destination.appendingPathComponent(base + ".xmp")
-        try? FileManager.default.copyItem(at: profile, to: sidecar)
     }
 
     // MARK: - Device Detection
@@ -110,7 +57,7 @@ class MTPManager: ObservableObject {
             state = .error("No MTP device found.\n\n"
                 + "1) Connect the Lumia 1020 with a USB *data* cable (not charge-only).\n"
                 + "2) Unlock the phone and keep the screen awake.\n"
-                + "3) Pull down the notification shade → USB → “Media device (MTP)”.\n"
+                + "3) Pull down the notification shade → USB → \u{201C}Media device (MTP)\u{201D}.\n"
                 + "4) Wait ~3s, then press Detect again.")
             return
         }
@@ -198,12 +145,12 @@ class MTPManager: ObservableObject {
         if photos.isEmpty {
             state = .error("Phone is connected, but libmtp sees an empty filesystem.\n\n"
                 + "Most common causes:\n"
-                + "• The phone screen is LOCKED — unlock it and keep it awake.\n"
-                + "• USB mode isn’t “Media device (MTP)” — set it in the notification shade.\n"
-                + "• A flaky USB link — unplug, wait 5s, "
+                + "\u{2022} The phone screen is LOCKED \u{2014} unlock it and keep it awake.\n"
+                + "\u{2022} USB mode isn\u{2019}t \u{201C}Media device (MTP)\u{201D} \u{2014} set it in the notification shade.\n"
+                + "\u{2022} A flaky USB link \u{2014} unplug, wait 5s, "
                 + "replug firmly into a direct port (no hub), unlock, then Detect.\n\n"
-                + "Tip: also try opening OpenMTP (/Applications) as a cross-check — "
-                + "if it sees files where this app doesn’t, tell me and I’ll swap the backend.")
+                + "Tip: also try opening OpenMTP (/Applications) as a cross-check \u{2014} "
+                + "if it sees files where this app doesn\u{2019}t, tell me and I\u{2019}ll swap the backend.")
             return
         }
 
@@ -217,8 +164,8 @@ class MTPManager: ObservableObject {
     /// lazily as cells scroll into view (requestThumbnail).
     @Published var thumbnailURLs: [String: URL] = [:]
 
-    // Serializes thumbnail production so the grid’s concurrent on-appear requests
-    // don’t spawn competing mtp-getfile processes (which would self-contend on the
+    // Serializes thumbnail production so the grid's concurrent on-appear requests
+    // don't spawn competing mtp-getfile processes (which would self-contend on the
     // single MTP interface, and on ptpcamerad).
     private var thumbGate: Task<Void, Never> = Task {}
     private var thumbWaiters: [String: [CheckedContinuation<URL?, Never>]] = [:]
@@ -264,7 +211,7 @@ class MTPManager: ObservableObject {
         return FileManager.default.fileExists(atPath: p.path) ? p : nil
     }
 
-    /// One thumbnail’s real work: free the camera daemon, fetch the paired JPEG
+    /// One thumbnail's real work: free the camera daemon, fetch the paired JPEG
     /// (or the file itself), downscale to 400px. Two attempts ride out a ptpcamerad
     /// respawn. Always runs serially via buildThumbnailSerially.
     private func produceThumbnail(for photo: PhotoItem) async -> URL? {
@@ -300,7 +247,7 @@ class MTPManager: ObservableObject {
 
     // MARK: - File Download
 
-    func downloadFile(_ photo: PhotoItem, to destination: URL, forceSidecar: Bool = false) async -> Bool {
+    func downloadFile(_ photo: PhotoItem, to destination: URL) async -> Bool {
         let destPath = destination.appendingPathComponent(photo.filename)
         // ptpcamerad respawns ~2s after we free it and re-grabs the interface, so
         // release it right before each getfile and retry on contention. A 0-byte
@@ -309,7 +256,6 @@ class MTPManager: ObservableObject {
             await reclaimPtpcamerad()
             _ = await runCommand("mtp-getfile", arguments: [photo.id, destPath.path])
             if Self.nonEmptyFile(at: destPath) {
-                if applyMode == .sidecar || forceSidecar { writeProfileSidecar(for: photo.filename, in: destination) }
                 return true
             }
             await Self.pause(0.8)
@@ -321,47 +267,18 @@ class MTPManager: ObservableObject {
             try? FileManager.default.removeItem(at: destPath)
             return false
         }
-        if applyMode == .sidecar || forceSidecar { writeProfileSidecar(for: photo.filename, in: destination) }
         return true
     }
 
     func downloadFiles(_ photos: [PhotoItem], to destination: URL,
-                       forceSidecar: Bool = false,
                        progressHandler: @escaping (Double, String) -> Void) async -> Int {
         var successCount = 0
-        processedCount = 0
         let total = Double(max(photos.count, 1))
-
-        // Decode the Look once, off the main thread, when we'll grade on import.
-        // The standalone pipeline renders each downloaded file through the Look
-        // with CoreImage and writes a graded JPEG to <dest>/Processed/ — the
-        // originals are never touched, so this is fully non-destructive.
-        var lut: LookLUT? = nil
-        let processDir = destination.appendingPathComponent("Processed", isDirectory: true)
-        if applyMode == .process, !forceSidecar, let profile = selectedProfile {
-            progressHandler(0, "Decoding look…")
-            lut = await Task.detached(priority: .userInitiated) {
-                try? AdobeLookLUT.decode(xmpAt: profile)
-            }.value
-            if lut != nil {
-                try? FileManager.default.createDirectory(at: processDir, withIntermediateDirectories: true)
-            }
-        }
 
         for (index, photo) in photos.enumerated() {
             progressHandler(Double(index) / total, photo.filename)
-            if await downloadFile(photo, to: destination, forceSidecar: forceSidecar) {
+            if await downloadFile(photo, to: destination) {
                 successCount += 1
-                if let lut {
-                    let src = destination.appendingPathComponent(photo.filename)
-                    let base = (photo.filename as NSString).deletingPathExtension
-                    let out = processDir.appendingPathComponent("\(base).jpg")
-                    let graded = await Task.detached(priority: .userInitiated) {
-                        (try? LookProcessor().apply(lut: lut, to: src, outputURL: out,
-                                                    format: .jpeg(quality: 0.95))) != nil
-                    }.value
-                    if graded { processedCount += 1 }
-                }
             }
         }
         progressHandler(1.0, "Done")
@@ -388,7 +305,7 @@ class MTPManager: ObservableObject {
 
     /// libmtp merges stdout+stderr; these substrings appear when another process
     /// holds the MTP interface (libusb error -3 / LIBUSB_ERROR_BUSY). A persistent
-    /// holder (e.g. the ChatGPT/Codex desktop app or Chrome) can’t be retried away.
+    /// holder (e.g. the ChatGPT/Codex desktop app or Chrome) can't be retried away.
     private static func isBusy(_ s: String) -> Bool {
         let l = s.lowercased()
         return l.contains("claim_interface")
@@ -431,10 +348,10 @@ class MTPManager: ObservableObject {
         }
     }
 
-    /// Stop macOS’s ptpcamerad, which grabs the Lumia’s USB interface exclusively
+    /// Stop macOS's ptpcamerad, which grabs the Lumia's USB interface exclusively
     /// and causes libusb_claim_interface() = -3. It runs as the current user (no
     /// sudo) and launchd respawns it afterwards, so this is safe and reversible.
-    /// Done via /bin/bash so we don’t depend on pkill being on PATH.
+    /// Done via /bin/bash so we don't depend on pkill being on PATH.
     private func reclaimPtpcamerad() async {
         _ = await runCommand("/bin/bash", arguments: [
             "-c", "pkill -9 -x ptpcamerad 2>/dev/null || true"
@@ -453,28 +370,28 @@ class MTPManager: ObservableObject {
     }
 
     private static func nonEmptyFile(at url: URL) -> Bool {
-        guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
-              let size = attrs[.size] as? NSNumber else { return false }
-        return size.int64Value > 0
+        (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0 > 0
     }
 
-    private static let busyMessage: String =
-        "Your Mac sees the Lumia 1020, but its USB interface is locked, so libmtp "
-        + "can’t read files (libusb error -3 / LIBUSB_ERROR_BUSY).\n\n"
-        + "This app already tries to release the usual culprit — macOS’s camera "
-        + "daemon (ptpcamerad, behind Photos / Image Capture) — automatically. If "
-        + "you’re still seeing this, the interface is held by something else, most "
+    // MARK: - Error messages
+
+    private static let busyMessage =
+        "Another process is holding the phone\u{2019}s USB interface "
+        + "(libusb_claim_interface() = -3 / LIBUSB_ERROR_BUSY).\n\n"
+        + "This app already tries to release the usual culprit \u{2014} macOS\u{2019}s camera "
+        + "daemon (ptpcamerad, behind Photos / Image Capture) \u{2014} automatically. If "
+        + "you\u{2019}re still seeing this, the interface is held by something else, most "
         + "often Google Chrome or the ChatGPT / Codex desktop app (both probe USB).\n\n"
         + "To free it:\n"
         + "1) Quit Google Chrome (and any USB-using tab/extension).\n"
-        + "2) Quit the ChatGPT / Codex desktop app — that ends this Codex session, "
+        + "2) Quit the ChatGPT / Codex desktop app \u{2014} that ends this Codex session, "
         + "so run the transfer from Terminal with ./lumia-transfer.sh (it releases "
         + "ptpcamerad itself and needs nothing quit), then relaunch Codex.\n"
-        + "3) Unplug → wait 5s → replug into a direct port, unlock the phone, set "
+        + "3) Unplug \u{2192} wait 5s \u{2192} replug into a direct port, unlock the phone, set "
         + "MTP, then press Refresh.\n\n"
         + "The libmtp output below shows the exact libusb_claim_interface() = -3 line."
 
-    /// libmtp’s "Friendly name" for the 1020 is the generic "Nokia Lumia WP8"; map the
+    /// libmtp's "Friendly name" for the 1020 is the generic "Nokia Lumia WP8"; map the
     /// known VID/PID (and the kernel-reported RM-877) to the real marketing name.
     private static func friendlyName(from output: String) -> String {
         let map: [String: String] = [

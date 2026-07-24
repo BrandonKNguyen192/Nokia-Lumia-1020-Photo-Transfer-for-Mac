@@ -29,11 +29,11 @@ struct ContentView: View {
             case .idle:
                 idleView
             case .detecting:
-                progressView("Detecting device…")
+                progressView("Detecting device\u{2026}")
             case .scanning:
-                progressView("Scanning phone storage…")
+                progressView("Scanning phone storage\u{2026}")
             case .downloadingThumbnails:
-                progressView("Loading thumbnails…")
+                progressView("Loading thumbnails\u{2026}")
             case .ready:
                 photoGrid
             case .transferring(let progress, let currentFile):
@@ -91,29 +91,6 @@ struct ContentView: View {
             .frame(width: 100)
             .disabled(mtp.photos.isEmpty)
 
-            // Color profile picker
-            if !mtp.availableProfiles.isEmpty {
-                Picker("Profile", selection: $mtp.selectedProfile) {
-                    Text("None").tag(URL?.none)
-                    ForEach(mtp.availableProfiles, id: \.self) { url in
-                        Text(url.deletingPathExtension().lastPathComponent)
-                            .tag(Optional(url))
-                    }
-                }
-                .frame(width: 180)
-
-                // How the selected Look is applied on import (standalone pipeline
-                // lives in LookKit; "Process" needs no Adobe software at all).
-                Picker("Apply", selection: $mtp.applyMode) {
-                    ForEach(ApplyMode.allCases) { mode in
-                        Text(mode.rawValue).tag(mode)
-                    }
-                }
-                .frame(width: 130)
-                .disabled(mtp.selectedProfile == nil)
-                .help("Off = originals only.  Sidecar = write .xmp for Lightroom.  Process = render the look to JPEG, no Lightroom.")
-            }
-
             Divider().frame(height: 20)
 
             // Selection count
@@ -141,17 +118,22 @@ struct ContentView: View {
             }
             .disabled(selectedIDs.isEmpty)
             .buttonStyle(.borderedProminent)
-            .controlSize(.small)
 
-            // Lightroom button
+            // Import to Lightroom
             Button {
                 importToLightroom()
             } label: {
-                Label("Lightroom", systemImage: "camera.aperture")
+                Label("Lightroom", systemImage: "photo.on.rectangle.angled")
             }
             .disabled(selectedIDs.isEmpty)
-            .buttonStyle(.bordered)
-            .controlSize(.small)
+
+            // Destination picker
+            Button {
+                showFilePicker = true
+            } label: {
+                Image(systemName: "folder")
+            }
+            .help(destinationURL?.path ?? "Choose destination folder")
 
             // Refresh
             Button {
@@ -159,120 +141,48 @@ struct ContentView: View {
             } label: {
                 Image(systemName: "arrow.clockwise")
             }
-            .controlSize(.small)
+            .keyboardShortcut("r", modifiers: .command)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(.bar)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
     }
 
-    // MARK: - Photo Grid
+    // MARK: - Filtered & Sorted Photos
 
     private var filteredPhotos: [PhotoItem] {
-        var items = mtp.photos
+        var result = mtp.photos
         if showOnlyDNG {
-            items = items.filter(\.isDNG)
+            result = result.filter { $0.isDNG }
         }
         switch sortOrder {
-        case .nameAsc: items.sort { $0.filename < $1.filename }
-        case .nameDesc: items.sort { $0.filename > $1.filename }
-        case .sizeAsc: items.sort { $0.fileSize < $1.fileSize }
-        case .sizeDesc: items.sort { $0.fileSize > $1.fileSize }
+        case .nameAsc:  result.sort { $0.filename < $1.filename }
+        case .nameDesc: result.sort { $0.filename > $1.filename }
+        case .sizeAsc:  result.sort { $0.fileSize < $1.fileSize }
+        case .sizeDesc: result.sort { $0.fileSize > $1.fileSize }
         }
-        return items
+        return result
     }
 
-    private var photoGrid: some View {
-        ScrollView {
-            if filteredPhotos.isEmpty {
-                VStack(spacing: 12) {
-                    Image(systemName: "photo.on.rectangle.angled")
-                        .font(.system(size: 48))
-                        .foregroundColor(.gray.opacity(0.4))
-
-                    if showOnlyDNG && !mtp.photos.isEmpty {
-                        // DNG filter is hiding JPEGs that DO exist on the phone.
-                        let jpegCount = mtp.photos.filter { !$0.isDNG }.count
-                        Text("No DNG files — but \(jpegCount) JPEG\(jpegCount == 1 ? "" : "s") found")
-                            .font(.title3)
-                            .foregroundColor(.secondary)
-                        Text("Turn off \"DNG only\" above to see them, or shoot in\nRAW + JPEG mode for future photos:\nNokia Camera → Settings → Capture mode → RAW + JPEG")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-                        Button("Show JPEGs") { showOnlyDNG = false }
-                            .buttonStyle(.borderedProminent)
-                            .controlSize(.small)
-                    } else if showOnlyDNG {
-                        Text("No DNG files found on the phone")
-                            .font(.title3)
-                            .foregroundColor(.secondary)
-                        Text("Make sure you're shooting in RAW mode in Nokia Camera:\nSettings → Capture mode → RAW + JPEG")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-                    } else {
-                        Text("No photos found")
-                            .font(.title3)
-                            .foregroundColor(.secondary)
-                    }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding(.top, 80)
-            } else {
-                LazyVGrid(columns: columns, spacing: 12) {
-                    ForEach(filteredPhotos) { photo in
-                        PhotoCellView(
-                            photo: photo,
-                            isSelected: selectedIDs.contains(photo.id),
-                            thumbnailURL: mtp.thumbnailURLs[photo.id],
-                            onToggle: { toggleSelection(photo.id) },
-                            onRequest: { await mtp.requestThumbnail(for: photo) }
-                        )
-                        .contextMenu {
-                            Button("Select") { selectedIDs.insert(photo.id) }
-                            Button("Deselect") { selectedIDs.remove(photo.id) }
-                            Divider()
-                            Button("Download to Desktop") {
-                                Task {
-                                    let desktop = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask)[0]
-                                    _ = await mtp.downloadFile(photo, to: desktop)
-                                }
-                            }
-                        }
-                    }
-                }
-                .padding(16)
-            }
-        }
-        .background(Color(nsColor: .windowBackgroundColor))
-    }
-
-    // MARK: - State Views
+    // MARK: - Views
 
     private var idleView: some View {
-        VStack(spacing: 20) {
-            Image(systemName: "iphone.slash")
-                .font(.system(size: 64))
-                .foregroundColor(.gray.opacity(0.3))
-
-            Text("No Device Connected")
-                .font(.title2)
-                .fontWeight(.medium)
-
-            Text("Connect your Nokia Lumia 1020 via USB cable,\nunlock the screen, and set USB mode to \"Media device (MTP)\".")
-                .font(.body)
+        VStack(spacing: 16) {
+            Image(systemName: "cable.connector")
+                .font(.system(size: 48))
                 .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
 
-            Button {
+            Text("Connect your Nokia Lumia 1020 via USB")
+                .font(.title3)
+                .foregroundColor(.secondary)
+
+            Text("Unlock the phone, then set USB mode to \u{201C}Media device (MTP)\u{201D}")
+                .font(.body)
+                .foregroundColor(.secondary.opacity(0.8))
+
+            Button("Detect Device") {
                 Task { await refresh() }
-            } label: {
-                Label("Detect Device", systemImage: "magnifyingglass")
-                    .frame(width: 160)
             }
             .buttonStyle(.borderedProminent)
-            .controlSize(.large)
 
             diagnosticPanel
         }
@@ -290,22 +200,81 @@ struct ContentView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    private var photoGrid: some View {
+        VStack(spacing: 0) {
+            if filteredPhotos.isEmpty {
+                VStack(spacing: 12) {
+                    Image(systemName: "photo.stack")
+                        .font(.system(size: 64))
+                        .foregroundColor(.secondary.opacity(0.5))
+                    if showOnlyDNG && !mtp.photos.isEmpty {
+                        Text("No DNG files found. Toggle \u{201C}DNG only\u{201D} off to see JPEGs.")
+                            .font(.body)
+                            .foregroundColor(.secondary)
+                    } else {
+                        Text("No photos found on device.")
+                            .font(.body)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    LazyVGrid(columns: columns, spacing: 12) {
+                        ForEach(filteredPhotos) { photo in
+                            PhotoCellView(
+                                photo: photo,
+                                isSelected: selectedIDs.contains(photo.id),
+                                thumbnailURL: mtp.thumbnailURLs[photo.id],
+                                onToggle: { toggleSelection(photo.id) },
+                                onRequest: { await mtp.requestThumbnail(for: photo) }
+                            )
+                        }
+                    }
+                    .padding(12)
+                }
+            }
+
+            Divider()
+
+            // Status bar
+            HStack {
+                Text("\(filteredPhotos.count) photo\(filteredPhotos.count == 1 ? "" : "s")")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+
+                Spacer()
+
+                if let dest = destinationURL {
+                    Text("Saving to: \(dest.lastPathComponent)")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                } else {
+                    Text("Default: ~/Pictures/Lumia 1020")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+
+            diagnosticPanel
+        }
+    }
+
     private func transferView(progress: Double, currentFile: String) -> some View {
         VStack(spacing: 16) {
-            ProgressView(value: progress) {
-                Text("Transferring…")
-                    .font(.headline)
-            } currentValueLabel: {
-                Text(currentFile)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-            .frame(width: 300)
+            ProgressView(value: progress)
+                .frame(width: 300)
+
+            Text(currentFile)
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundColor(.secondary)
+                .lineLimit(1)
 
             Text("\(Int(progress * 100))%")
-                .font(.title3)
+                .font(.title2)
                 .fontWeight(.medium)
-                .foregroundColor(.accentColor)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -316,34 +285,27 @@ struct ContentView: View {
                 .font(.system(size: 48))
                 .foregroundColor(.green)
 
-            Text("Imported \(count) file\(count == 1 ? "" : "s")")
-                .font(.title2)
-                .fontWeight(.medium)
-
-            if mtp.processedCount > 0 {
-                Text("\(mtp.processedCount) graded with the selected look → Processed/")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
+            Text("Imported \(count) photo\(count == 1 ? "" : "s")")
+                .font(.title3)
 
             if let dest = destinationURL {
-                Text("Saved to: \(dest.path)")
-                    .font(.caption)
+                Text("Saved to \(dest.path)")
+                    .font(.body)
                     .foregroundColor(.secondary)
             }
 
             HStack(spacing: 12) {
-                Button("Open Folder") {
-                    if let dest = destinationURL {
+                Button("Import More") {
+                    selectedIDs.removeAll()
+                    Task { await refresh() }
+                }
+                .buttonStyle(.borderedProminent)
+
+                if let dest = destinationURL {
+                    Button("Open in Finder") {
                         NSWorkspace.shared.open(dest)
                     }
                 }
-                .buttonStyle(.bordered)
-
-                Button("Done") {
-                    mtp.state = .ready
-                }
-                .buttonStyle(.borderedProminent)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -407,10 +369,10 @@ struct ContentView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    /// Re-run detect → scan, guarding scan on a successful detect. Single source
-    /// of truth for the toolbar Refresh button, the idle/error CTAs, the ⌘R /
+    /// Re-run detect \u{2192} scan, guarding scan on a successful detect. Single source
+    /// of truth for the toolbar Refresh button, the idle/error CTAs, the \u{2318}R /
     /// Device menu (via .refreshDevice), and the one-shot launch detect in `.task`.
-    /// Thumbnails are NOT loaded here — the grid fetches them lazily per cell, so
+    /// Thumbnails are NOT loaded here \u{2014} the grid fetches them lazily per cell, so
     /// the UI reaches .ready (interactive) as soon as the file list is parsed.
     private func refresh() async {
         await mtp.detectDevice()
@@ -456,7 +418,7 @@ struct ContentView: View {
         let selectedPhotos = filteredPhotos.filter { selectedIDs.contains($0.id) }
 
         Task {
-            let count = await mtp.downloadFiles(selectedPhotos, to: dest, forceSidecar: true) { progress, file in
+            let count = await mtp.downloadFiles(selectedPhotos, to: dest) { progress, file in
                 mtp.state = .transferring(progress: progress, currentFile: file)
             }
 

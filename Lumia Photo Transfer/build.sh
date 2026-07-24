@@ -17,15 +17,6 @@ if [ -f Assets/AppIcon.icns ]; then
     cp Assets/AppIcon.icns "$APP_DIR/Contents/Resources/AppIcon.icns"
 fi
 
-# Bundle any Look profiles the user has placed in the local Profiles/ folder
-# (Profiles/ is gitignored — third-party Looks are NOT redistributed).
-# (the app also scans ~/Library/Application Support/Lumia Photo Transfer/Profiles
-# for profiles the user drops in themselves, e.g. a purchased Cobalt pack).
-if [ -d ../Profiles ]; then
-    mkdir -p "$APP_DIR/Contents/Profiles"
-    cp -R ../Profiles/. "$APP_DIR/Contents/Profiles/" 2>/dev/null || true
-fi
-
 # This project lives under ~/Documents, which on macOS is often iCloud-synced
 # ("Desktop & Documents"). iCloud stamps every file with xattrs like
 # com.apple.fileprovider.fpfs#P and com.apple.FinderInfo, and codesign
