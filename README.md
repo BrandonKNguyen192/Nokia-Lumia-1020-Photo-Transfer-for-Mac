@@ -54,11 +54,11 @@ brew install libmtp
 
 ### Option A: Download the DMG
 
-If a pre-built DMG is available in the [Releases](../../releases) page:
+Download the latest DMG from [Releases](https://github.com/BrandonKNguyen192/Nokia-Lumia-1020-Photo-Transfer-for-Mac/releases):
 
-1. Download **`Lumia Photo Transfer-x.y.z.dmg`**
-2. Open the DMG → drag **Lumia Photo Transfer** to your Applications folder
-3. Launch from Applications (or Spotlight)
+1. Download **[Lumia Photo Transfer‑1.0.0.dmg](https://github.com/BrandonKNguyen192/Nokia-Lumia-1020-Photo-Transfer-for-Mac/releases/download/v1.0.0/Lumia.Photo.Transfer-1.0.0.dmg)** (979 KB)
+2. Open the DMG → drag **Lumia Photo Transfer** to your **Applications** folder
+3. Launch from Applications (or Spotlight — ⌘Space → "Lumia")
 
 > The DMG is signed with an Apple Developer ID and notarized by Apple, so Gatekeeper will let it run on first launch without any right-click → Open workaround.
 
