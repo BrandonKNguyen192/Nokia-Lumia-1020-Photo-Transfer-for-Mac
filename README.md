@@ -325,6 +325,26 @@ The script auto-detects your signing identity from the keychain. For notarizatio
 
 This produces a DMG signed ad-hoc. Users will need to **right-click → Open** on first launch to bypass Gatekeeper.
 
+### Storing notarization credentials securely (recommended)
+
+Instead of typing your app‑specific password on every build (or exporting it as
+an env var), store it **once** in your login keychain. `notarytool` then reads it
+automatically, and the password never appears on any command line:
+
+```bash
+xcrun notarytool store-credentials "LumiaNotary" --team-id 3GKZY82PF6
+# prompts for your Apple ID + app-specific password, saves them encrypted
+```
+
+Then build with the profile name — no secrets on the command line:
+
+```bash
+NOTARY_KEYCHAIN_PROFILE=LumiaNotary ./make-dmg.sh
+```
+
+Your Apple ID and app‑specific password are typed only into your own Terminal and
+saved encrypted in the keychain; `make-dmg.sh` never sees them as arguments.
+
 ### Verifying a DMG
 
 ```bash
