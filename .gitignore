@@ -28,3 +28,8 @@ Profiles/
 
 # AI coding assistant local config (per-developer, not project config)
 .claude/
+
+# Colour Look pipeline — removed from the open-source release.
+# iCloud may restore these files; keep them out of the repo.
+Lumia Photo Transfer/Sources/LookKit/
+Lumia Photo Transfer/Sources/lumia-look/
