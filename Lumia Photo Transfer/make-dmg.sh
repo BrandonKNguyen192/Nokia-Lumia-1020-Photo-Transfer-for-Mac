@@ -133,6 +133,7 @@ fi
 
 codesign --force --options runtime --sign "$IDENTITY" "$APP_DIR"
 ok "Code signed"
+xattr -cr "$APP_DIR"
 codesign --verify --deep --strict "$APP_DIR" 2>/dev/null && ok "Signature verified" || {
     err "Signature verification failed"; exit 1; }
 
@@ -145,6 +146,7 @@ info "Creating DMG…"
 mkdir -p "$STAGING"
 cp -R "$APP_DIR" "$STAGING/"
 ln -s /Applications "$STAGING/Applications"
+xattr -cr "$STAGING"
 hdiutil create -volname "$APP_NAME" -srcfolder "$STAGING" \
     -ov -format UDZO "$DMG_PATH" -quiet
 rm -rf "$STAGING"
