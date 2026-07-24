@@ -25,3 +25,6 @@ Lumia Photo Transfer/Lumia Photo Transfer.app/
 # Third-party Look profiles (© Cobalt-Image etc.) — proprietary, NOT for redistribution.
 # Users install their own purchased/downloaded packs locally; see README §9.
 Profiles/
+
+# AI coding assistant local config (per-developer, not project config)
+.claude/

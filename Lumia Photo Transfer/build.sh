@@ -17,8 +17,8 @@ if [ -f Assets/AppIcon.icns ]; then
     cp Assets/AppIcon.icns "$APP_DIR/Contents/Resources/AppIcon.icns"
 fi
 
-# Bundle any Look profiles that ship in the repo's Profiles/ folder so a fresh
-# clone has at least the example Look available when installed to /Applications
+# Bundle any Look profiles the user has placed in the local Profiles/ folder
+# (Profiles/ is gitignored — third-party Looks are NOT redistributed).
 # (the app also scans ~/Library/Application Support/Lumia Photo Transfer/Profiles
 # for profiles the user drops in themselves, e.g. a purchased Cobalt pack).
 if [ -d ../Profiles ]; then

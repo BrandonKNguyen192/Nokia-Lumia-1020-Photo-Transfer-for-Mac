@@ -408,8 +408,8 @@ Lumia Photo Transfer/
 │   └── lumia-look/                   — standalone CLI that grades photos (see §9)
 │       └── main.swift
 ├── Package.swift
-├── build.sh                          — Build + install script (bundles Profiles/)
-├── ../Profiles/                      — bundled example Look(s)
+├── build.sh                          — Build + install script
+├── ../Profiles/                      — YOUR Look profiles (gitignored, not shipped)
 └── Lumia Photo Transfer.app          — Compiled app bundle
 ```
 
@@ -479,8 +479,8 @@ decoder is format-agnostic; a whole pack of 24 Cobalt Ricoh GR / GRIII Looks was
 validated end-to-end.
 
 > **Licensing:** the Look `.xmp` files themselves are third-party creative work
-> (e.g. © Cobalt-Image). This repo ships **one** example Look for demonstration;
-> the rest you install locally from packs you've purchased/downloaded. Don't
+> (e.g. © Cobalt-Image). This repo does **not** ship any Look files;
+> you install them locally from packs you've purchased/downloaded. Don't
 > redistribute Look packs you don't have the rights to share.
 
 ### A note on DNGs and colour spaces
@@ -497,7 +497,7 @@ encoding it would anyway.
 This project is intended to be safe to publish:
 
 - **No secrets, keys, tokens, or personal paths** are in the source or history.
-- The bundled example Look carries only its vendor's public contact info.
+- No third-party Look profiles are bundled; the `Profiles/` directory is gitignored.
 - The app is ad-hoc signed by `build.sh`; there is no hardcoded signing identity.
 - Transfer history (`~/.lumia-transfer-history`) and downloaded photos stay on
   your machine and are never committed (see `.gitignore`).
