@@ -21,3 +21,7 @@ Lumia Photo Transfer/Lumia Photo Transfer.app/
 # Runtime / secret artifacts that another tool may drop in the working tree
 # (e.g. a jwt_secret). NOT part of this project — never commit.
 /data/
+
+# Third-party Look profiles (© Cobalt-Image etc.) — proprietary, NOT for redistribution.
+# Users install their own purchased/downloaded packs locally; see README §9.
+Profiles/
