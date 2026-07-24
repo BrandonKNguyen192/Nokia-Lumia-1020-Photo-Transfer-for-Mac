@@ -33,3 +33,12 @@ Profiles/
 # iCloud may restore these files; keep them out of the repo.
 Lumia Photo Transfer/Sources/LookKit/
 Lumia Photo Transfer/Sources/lumia-look/
+
+# Apple signing / notarization artifacts — NEVER commit.
+# The private key for the Developer ID cert must stay off the repo entirely.
+*.cer
+*.certSigningRequest
+*.p12
+*.pfx
+*.mobileprovision
+*.key
