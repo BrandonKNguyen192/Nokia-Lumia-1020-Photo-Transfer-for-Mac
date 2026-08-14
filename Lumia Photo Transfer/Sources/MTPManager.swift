@@ -55,15 +55,19 @@ class MTPManager: ObservableObject {
         if output.contains("No raw devices found") || output.contains("No devices") {
             deviceInfo = nil
             state = .error("No MTP device found.\n\n"
-                + "1) Connect the Lumia 1020 with a USB *data* cable (not charge-only).\n"
+                + "1) Connect the phone with a USB *data* cable (not charge-only).\n"
                 + "2) Unlock the phone and keep the screen awake.\n"
                 + "3) Pull down the notification shade → USB → \u{201C}Media device (MTP)\u{201D}.\n"
                 + "4) Wait ~3s, then press Detect again.")
             return
         }
 
-        let name = Self.friendlyName(from: output)
-        let model = extractField(output, field: "Model:") ?? "Lumia 1020"
+        // Use the name/model the device itself reports. For Lumias that's the
+        // only reliable signal — libmtp's "Friendly name" is often just the
+        // generic "Nokia Lumia WP8" and the VID/PID is shared across many RM
+        // models, so we can't hard-map product IDs to exact marketing names.
+        let name = Self.deviceName(from: output)
+        let model = extractField(output, field: "Model:") ?? name
         let serial = extractField(output, field: "Serial number:") ?? ""
 
         deviceInfo = MTPDeviceInfo(name: name, model: model, serial: serial, isConnected: true)
@@ -391,14 +395,27 @@ class MTPManager: ObservableObject {
         + "MTP, then press Refresh.\n\n"
         + "The libmtp output below shows the exact libusb_claim_interface() = -3 line."
 
-    /// libmtp's "Friendly name" for the 1020 is the generic "Nokia Lumia WP8"; map the
-    /// known VID/PID (and the kernel-reported RM-877) to the real marketing name.
-    private static func friendlyName(from output: String) -> String {
+    /// Human-friendly device name, preferring whatever the device itself reports.
+    ///
+    /// libmtp's "Friendly name:" is the most specific available, but Microsoft /
+    /// HMD factory firmware usually reports only the generic "Nokia Lumia" (or
+    /// "Nokia Lumia WP8"), so we don't trust it blindly. We keep a small VID/PID
+    /// table only to label known Nokia families libmtp names generically, and
+    /// fall back to the reported model, then a generic label.
+    private static func deviceName(from output: String) -> String {
+        // 1) Best: a non-generic Friendly name / Model the device actually reports.
+        if let f = field(output, "Friendly name:"), !f.isEmpty, !Self.isGeneric(f) { return f }
+        if let m = field(output, "Model:"), !m.isEmpty, !Self.isGeneric(m) { return m }
+
+        // 2) Known Nokia VID/PID families libmtp can only name generically.
         let map: [String: String] = [
-            "0421:0661": "Nokia Lumia 1020",
-            "0421:0662": "Nokia Lumia 1020",
-            "0421:0663": "Nokia Lumia 1020",
-            "0421:06fc": "Nokia Lumia 1020",
+            "0421:0661": "Nokia Lumia",
+            "0421:0662": "Nokia Lumia",
+            "0421:0663": "Nokia Lumia",
+            "0421:06fc": "Nokia Lumia",
+            "0421:0619": "Nokia N8",
+            "0421:0627": "Nokia N950",
+            "0421:0609": "Nokia N900",
         ]
         if let re = try? NSRegularExpression(pattern: "VID=([0-9A-Fa-f]+)\\s+and\\s+PID=([0-9A-Fa-f]+)"),
            let m = re.firstMatch(in: output, range: NSRange(location: 0, length: (output as NSString).length)),
@@ -408,9 +425,18 @@ class MTPManager: ObservableObject {
             let pid = pad(ns.substring(with: m.range(at: 2)).lowercased(), to: 4)
             if let nice = map["\(vid):\(pid)"] { return nice }
         }
-        if let f = field(output, "Friendly name:"), !f.isEmpty, f != "Nokia Lumia WP8" { return f }
-        if output.contains("Nokia Lumia WP8") { return "Nokia Lumia 1020" }
+
+        // 3) Last resort.
+        if output.contains("Nokia Lumia WP8") || output.contains("Nokia Lumia") { return "Nokia Lumia" }
         return "MTP Device"
+    }
+
+    /// Strings that add no real model info and can't name a folder usefully.
+    private static func isGeneric(_ s: String) -> Bool {
+        let l = s.trimmingCharacters(in: .whitespaces).lowercased()
+        if l.isEmpty { return true }
+        return l == "nokia lumia" || l == "nokia lumia wp8" || l.hasPrefix("nokia lumia wp")
+            || l == "lumia" || l == "mtp device" || l == "generic"
     }
 
     private static func pad(_ s: String, to n: Int) -> String {

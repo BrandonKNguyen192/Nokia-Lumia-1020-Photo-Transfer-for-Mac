@@ -33,7 +33,7 @@ extension Notification.Name {
 
 // MARK: - Settings View
 struct SettingsView: View {
-    @AppStorage("defaultDestination") private var defaultDestination = "~/Pictures/Lumia 1020"
+    @AppStorage("defaultDestination") private var defaultDestination = "~/Pictures/Lumia Photos"
     @AppStorage("autoImportLightroom") private var autoImportLightroom = false
 
     var body: some View {

@@ -1,9 +1,9 @@
 #!/bin/bash
 # =============================================================================
-# lumia-transfer.sh — Pull DNG (RAW) files from Nokia Lumia 1020 via USB/MTP
+# lumia-transfer.sh — Pull photos (incl. DNG RAW where supported) from Nokia Lumias via USB/MTP
 # =============================================================================
 # Usage:
-#   ./lumia-transfer.sh                  # Download new DNGs to ~/Pictures/Lumia 1020
+#   ./lumia-transfer.sh                  # Download new DNGs to ~/Pictures/<Device Name>
 #   ./lumia-transfer.sh /path/to/dest    # Download new DNGs to a custom folder
 #   ./lumia-transfer.sh --all            # Re-download ALL DNGs (ignore history)
 #   ./lumia-transfer.sh --list           # Just list DNG files on the phone
@@ -21,7 +21,7 @@
 set -euo pipefail
 
 # --- Configuration -----------------------------------------------------------
-DEFAULT_DEST="$HOME/Pictures/Lumia 1020"
+DEFAULT_DEST="$HOME/Pictures/Lumia Photos"
 HISTORY_FILE="$HOME/.lumia-transfer-history"
 LIGHTROOM_APP="/Applications/Adobe Lightroom Classic.app"
 
@@ -30,7 +30,7 @@ RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 BLUE='\033[0;34m'; CYAN='\033[0;36m'; NC='\033[0m'
 
 # --- Parse arguments ---------------------------------------------------------
-DEST="$DEFAULT_DEST"; ALL=false; LIST_ONLY=false; IMPORT=false
+DEST="$DEFAULT_DEST"; EXPLICIT_DEST=false; ALL=false; LIST_ONLY=false; IMPORT=false
 for arg in "$@"; do
     case "$arg" in
         --all)     ALL=true ;;
@@ -39,7 +39,7 @@ for arg in "$@"; do
         --help|-h)
             sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
             exit 0 ;;
-        *)         DEST="$arg" ;;
+        *)         DEST="$arg"; EXPLICIT_DEST=true ;;
     esac
 done
 
@@ -82,7 +82,7 @@ for cmd in mtp-detect mtp-filetree mtp-getfile; do
 done
 
 # --- Step 1: Detect device ---------------------------------------------------
-header "Detecting Nokia Lumia 1020"
+header "Detecting Nokia Lumia"
 
 start_reaper
 
@@ -101,16 +101,32 @@ if is_busy "$DETECT_OUTPUT"; then
 fi
 if is_nodevice "$DETECT_OUTPUT"; then
     error "No MTP device found."
-    echo "  1. Connect the Lumia 1020 with a USB *data* cable (not charge-only)."
+    echo "  1. Connect the phone with a USB *data* cable (not charge-only)."
     echo "  2. Unlock the phone and keep the screen awake."
     echo "  3. Notification shade → USB → \u201CMedia device (MTP)\u201D."
     echo "  4. Wait ~3s and re-run. (Try another port/cable if still nothing.)"
     exit 1
 fi
 
+# Prefer whatever name/model the device itself reports; fall back to a generic
+# "Nokia Lumia". libmtp often reports only "Nokia Lumia WP8" by default.
 DEVICE_NAME=$(echo "$DETECT_OUTPUT" | grep -m1 'Friendly name:' | sed 's/.*Friendly name: *//' || true)
-case "$DEVICE_NAME" in ""|"Nokia Lumia WP8") DEVICE_NAME="Nokia Lumia 1020" ;; esac
+if [ -z "$DEVICE_NAME" ]; then
+    DEVICE_NAME=$(echo "$DETECT_OUTPUT" | grep -m1 'Model:' | sed 's/.*Model: *//' || true)
+fi
+case "$DEVICE_NAME" in
+    ""|"Nokia Lumia WP8"|"Nokia Lumia WP"*) DEVICE_NAME="Nokia Lumia" ;;
+esac
 success "Found: $DEVICE_NAME"
+
+# If the user didn't pass an explicit destination, name the default folder after
+# the connected device (e.g. ~/Pictures/Nokia Lumia). Sanitized to a path-safe
+# form. A pipe keeps the case-substitution from tripping `set -e`.
+if [ "$EXPLICIT_DEST" = false ]; then
+    SAFE_NAME=$(printf '%s' "$DEVICE_NAME" | tr -cs '[:alnum:] ._-' ' ' | sed 's/  */ /g' | sed 's/^ *//;s/ *$//')
+    [ -n "$SAFE_NAME" ] || SAFE_NAME="Lumia Photos"
+    DEST="$HOME/Pictures/$SAFE_NAME"
+fi
 
 # --- Step 2: Scan for DNG files ----------------------------------------------
 header "Scanning phone storage"

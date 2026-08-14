@@ -1,15 +1,15 @@
 # Lumia Photo Transfer for Mac
 
-**Pull 48 MP DNG (RAW) photos off your Nokia Lumia 1020 and into Lightroom Classic — natively on macOS, no Windows VM required.**
+**Pull photos (including 41 MP / 48 MP DNG RAW where supported) off any Nokia Lumia and into Lightroom Classic — natively on macOS, no Windows VM required.**
 
-The Lumia 1020 shoots stunning 48 MP RAW files, but getting them off the phone on a modern Mac is surprisingly painful: there's no official Nokia software for macOS, and the phone's MTP implementation fights with macOS's camera daemon. This project solves that with two tools:
+The Lumia line shoots great photos — the 1020's 48 MP RAW files are legend — but getting them off the phone on a modern Mac is surprisingly painful: there's no official Nokia software for macOS, and the phone's MTP implementation fights with macOS's camera daemon. This project solves that for **any Lumia** (and most other MTP phones) with two tools:
 
 | Tool | What it is |
 |------|-----------|
-| **Lumia Photo Transfer** (GUI app) | A native SwiftUI app with a visual photo grid, thumbnail previews, one-click DNG import, and a direct Lightroom Classic bridge. |
+| **Lumia Photo Transfer** (GUI app) | A native SwiftUI app with a visual photo grid, thumbnail previews, one-click DNG/JPEG import, and a direct Lightroom Classic bridge. |
 | **`lumia-transfer.sh`** (CLI) | A zero-dependency Bash script for headless / automated transfers with incremental history. |
 
-Both wrap [libmtp](https://libmtp.sourceforge.io) under the hood and handle the macOS-specific headaches (ptpcamerad contention, Homebrew PATH injection, retry logic) so you don't have to.
+Both wrap [libmtp](https://libmtp.sourceforge.io) under the hood and handle the macOS-specific headaches (ptpcamerad contention, Homebrew PATH injection, retry logic) so you don't have to. The tools are generic MTP clients, so they detect the device's real model name automatically and work across the whole Lumia line (and any other MTP camera/phone).
 
 ---
 
@@ -39,7 +39,7 @@ Both wrap [libmtp](https://libmtp.sourceforge.io) under the hood and handle the 
 | **Apple Silicon or Intel** | Universal — builds for whichever arch you're on |
 | **[Homebrew](https://brew.sh)** | Package manager for libmtp |
 | **libmtp** (`brew install libmtp`) | MTP protocol library + CLI tools (`mtp-detect`, `mtp-filetree`, `mtp-getfile`) |
-| **Nokia Lumia 1020** | The phone itself, running Windows Phone 8.1 (Denim) |
+| **A Nokia Lumia** | Any Windows Phone 7.5+/8.x Lumia over USB/MTP. Works with the whole line — 520, 620, 720, 820, 920, 1020, 1520, etc. |
 | **USB data cable** | Micro-USB — must be a *data* cable, not charge-only |
 | Adobe Lightroom Classic *(optional)* | For the one-click import bridge |
 
@@ -47,6 +47,8 @@ Both wrap [libmtp](https://libmtp.sourceforge.io) under the hood and handle the 
 # Install the one dependency:
 brew install libmtp
 ```
+
+> **Which Lumias shoot RAW (DNG)?** Only the **Lumia 1020** (41 MP / 48 MP) and the **Lumia 1520** (with RAW capture enabled in Nokia Camera) store DNG files. Every other Lumia stores **JPEG only**. The app handles both automatically: it imports DNG+JPEG pairs when present, and gracefully falls back to JPEG-only for models that don't shoot RAW. Because the tools are generic MTP clients, they also work with any other MTP device (other phones, digital cameras, etc.), naming the destination folder after whatever device is connected.
 
 ---
 
@@ -56,7 +58,7 @@ brew install libmtp
 
 Download the latest DMG from [Releases](https://github.com/BrandonKNguyen192/Nokia-Lumia-1020-Photo-Transfer-for-Mac/releases):
 
-1. Download **[Lumia Photo Transfer‑1.0.0.dmg](https://github.com/BrandonKNguyen192/Nokia-Lumia-1020-Photo-Transfer-for-Mac/releases/download/v1.0.0/Lumia.Photo.Transfer-1.0.0.dmg)** (979 KB)
+1. Download **[Lumia Photo Transfer‑1.1.0.dmg](https://github.com/BrandonKNguyen192/Nokia-Lumia-1020-Photo-Transfer-for-Mac/releases/download/v1.1.0/Lumia.Photo.Transfer-1.1.0.dmg)**
 2. Open the DMG → drag **Lumia Photo Transfer** to your **Applications** folder
 3. Launch from Applications (or Spotlight — ⌘Space → "Lumia")
 
@@ -92,7 +94,7 @@ cd ..
 
 Every time you want to transfer:
 
-1. **Plug in** the Lumia 1020 via USB data cable
+1. **Plug in** the phone via USB data cable
 2. **Unlock** the phone screen (MTP won't work while locked)
 3. Pull down the **notification shade** → tap the USB notification → select **"Media device (MTP)"**
 4. Wait ~3 seconds for the Mac to recognize the device
@@ -105,8 +107,8 @@ Every time you want to transfer:
    - Thumbnails are generated from the paired JPEG companions (fast, no RAW decode)
 3. **Click photos** to select them, or hit **Select All**
 4. Choose your action:
-   - **Import** — saves DNGs to `~/Pictures/Lumia 1020` (or a folder you pick with the 📁 button)
-   - **Lightroom** — imports the DNGs, then automatically opens Lightroom Classic pointed at the folder
+   - **Import** — saves photos to `~/Pictures/<Device Name>` (named after your connected phone; or a folder you pick with the 📁 button)
+   - **Lightroom** — imports the photos, then automatically opens Lightroom Classic pointed at the folder
 
 ### Toolbar Reference
 
@@ -136,7 +138,7 @@ Open **Lumia Photo Transfer → Settings** (⌘,) to set:
 ```bash
 cd ~/path/to/Nokia-Lumia-1020-Photo-Transfer-for-Mac
 
-# Download new DNG files (skips already-transferred ones)
+# Download new photos / DNG files (skips already-transferred ones)
 ./lumia-transfer.sh
 
 # Download to a custom folder
@@ -176,9 +178,9 @@ lumia --list     # see what's on the phone
 ### Method 1: One-Click (GUI App)
 
 1. Select photos in the app → click **Lightroom**
-2. The app downloads the DNGs to `~/Pictures/Lumia 1020`
+2. The app downloads the photos to `~/Pictures/<Device Name>` (named after your phone)
 3. Lightroom Classic launches, pointed at that folder
-4. In Lightroom: **File → Import** → the DNGs are right there
+4. In Lightroom: **File → Import** → the photos are right there
 
 ### Method 2: CLI
 
@@ -192,13 +194,13 @@ Set up Lightroom to watch the download folder automatically:
 
 1. In Lightroom Classic: **File → Auto Import → Auto Import Settings**
 2. Enable **"Enable Auto Import"**
-3. Set **Watched Folder** to `~/Pictures/Lumia 1020`
+3. Set **Watched Folder** to the download folder (use the actual folder — by default `~/Pictures/<Device Name>`, e.g. `~/Pictures/Nokia Lumia`)
 4. Set **Destination** to your catalog location
 5. Now whenever the script (or app) downloads new DNGs, Lightroom imports them automatically
 
 ### Developing the DNGs
 
-The Lumia 1020's 48 MP DNGs are standard Adobe DNG files. Lightroom reads them natively — no plugin needed. You get full RAW control: white balance, exposure, shadow/highlight recovery, lens corrections, etc.
+The Lumia 1020's (and 1520's) DNGs are standard Adobe DNG files. Lightroom reads them natively — no plugin needed. You get full RAW control: white balance, exposure, shadow/highlight recovery, lens corrections, etc.
 
 ---
 
@@ -364,7 +366,7 @@ stapler validate "dist/Lumia Photo Transfer-1.0.0.dmg"
 
 ### The MTP Problem on macOS
 
-The Lumia 1020 exposes its storage via **MTP** (Media Transfer Protocol), not as a regular USB mass-storage volume. macOS has no built-in MTP file browser (Finder only handles mass-storage), so we use [libmtp](https://libmtp.sourceforge.io) — an open-source MTP library with CLI tools.
+The phones expose their storage via **MTP** (Media Transfer Protocol), not as a regular USB mass-storage volume. macOS has no built-in MTP file browser (Finder only handles mass-storage), so we use [libmtp](https://libmtp.sourceforge.io) — an open-source MTP library with CLI tools. Because libmtp speaks standard MTP, the tools work with the entire Lumia line and most other MTP devices.
 
 The wrinkle: macOS's **ptpcamerad** daemon (which powers Photos and Image Capture) grabs the phone's USB interface exclusively the moment it's plugged in. libmtp then fails with `libusb_claim_interface() = -3` (LIBUSB_ERROR_BUSY). Both tools work around this:
 
@@ -373,20 +375,20 @@ The wrinkle: macOS's **ptpcamerad** daemon (which powers Photos and Image Captur
 
 ptpcamerad runs as your user (no sudo) and launchd respawns it automatically after the transfer, so this is safe and fully reversible.
 
-### DNG/JPEG Pairing
+### DNG/JPEG Pairing (RAW-capable models)
 
-The Lumia 1020 shoots each photo as a pair:
+Only the Lumia 1020 (and 1520 in RAW mode) stores photos as a DNG + JPEG pair. For those models each photo looks like:
 
 ```
 WP_20240101_001_Raw.jpg          ← 5 MP JPEG preview
-WP_20240101_001_Raw__highres.dng ← 48 MP RAW
+WP_20240101_001_Raw__highres.dng ← 41 / 48 MP RAW
 ```
 
-The app pairs them by basename (stripping the `__highres` suffix) so you see one entry per photo. Thumbnails are generated from the JPEG companion (fast), while the actual import downloads the full DNG.
+The app pairs them by basename (stripping the `__highres` suffix) so you see one entry per photo. Thumbnails are generated from the JPEG companion (fast), while the actual import downloads the full DNG. On models that store **JPEGs only** (most of the Lumia line), the same code path simply lists the JPEGs and imports them directly — no DNG required.
 
 ### Why Not Just Use Image Capture / Photos?
 
-macOS's built-in PTP/MTP stack only sees the JPEG files on the Lumia 1020 — the DNGs are invisible to it. libmtp talks MTP directly and sees everything.
+macOS's built-in PTP/MTP stack only sees the JPEG files on a Lumia — on RAW-capable models the DNGs are invisible to it. libmtp talks MTP directly and sees everything.
 
 ---
 

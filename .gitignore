@@ -9,6 +9,10 @@
 *.xcworkspace/xcuserdata/
 DerivedData/
 
+# Distributable DMG / app bundle built by make-dmg.sh — generate fresh on release.
+# (Signed/notarized artifacts are version-specific; rebuild for each tag.)
+Lumia Photo Transfer/dist/
+
 # Compiled app bundle — rebuild with: cd "Lumia Photo Transfer" && ./build.sh
 # (ARM-only + ad-hoc signed, so not portable; source is the real artifact)
 Lumia Photo Transfer/Lumia Photo Transfer.app/

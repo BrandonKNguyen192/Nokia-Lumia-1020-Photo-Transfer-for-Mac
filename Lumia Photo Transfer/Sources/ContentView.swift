@@ -171,7 +171,7 @@ struct ContentView: View {
                 .font(.system(size: 48))
                 .foregroundColor(.secondary)
 
-            Text("Connect your Nokia Lumia 1020 via USB")
+            Text("Connect your phone via USB")
                 .font(.title3)
                 .foregroundColor(.secondary)
 
@@ -250,7 +250,7 @@ struct ContentView: View {
                         .font(.system(size: 11))
                         .foregroundColor(.secondary)
                 } else {
-                    Text("Default: ~/Pictures/Lumia 1020")
+                    Text("Default: \(defaultDestinationPath)")
                         .font(.system(size: 11))
                         .foregroundColor(.secondary)
                 }
@@ -391,10 +391,36 @@ struct ContentView: View {
         }
     }
 
+    /// Default destination folder, named after whatever device is connected
+    /// (e.g. ~/Pictures/Nokia Lumia). Falls back to a generic "Lumia Photos".
+    private var defaultDestination: URL {
+        let pictures = FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask)[0]
+        let name = mtp.deviceInfo?.name
+            .flatMap(Self.sanitizeFolderComponent(_:))
+            ?? "Lumia Photos"
+        return pictures.appendingPathComponent(name, isDirectory: true)
+    }
+
+    private var defaultDestinationPath: String {
+        let url = destinationURL ?? defaultDestination
+        return url.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")
+    }
+
+    /// Fold a device-reported name into a safe single path component.
+    private static func sanitizeFolderComponent(_ name: String) -> String? {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: " ._-"))
+        let cleaned = String(name.unicodeScalars.map {
+            allowed.contains($0) ? Character($0) : Character(" ")
+        })
+        .split(separator: " ")
+        .joined(separator: " ")
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleaned.isEmpty ? nil : cleaned
+    }
+
     private func importSelected() {
-        // If no destination set, default to ~/Pictures/Lumia 1020
-        let dest = destinationURL ?? FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Lumia 1020", isDirectory: true)
+        // If no destination set, default to ~/Pictures/<Device Name>
+        let dest = destinationURL ?? defaultDestination
 
         try? FileManager.default.createDirectory(at: dest, withIntermediateDirectories: true)
         destinationURL = dest
@@ -410,8 +436,7 @@ struct ContentView: View {
     }
 
     private func importToLightroom() {
-        let dest = FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Lumia 1020", isDirectory: true)
+        let dest = defaultDestination
         try? FileManager.default.createDirectory(at: dest, withIntermediateDirectories: true)
         destinationURL = dest
 
